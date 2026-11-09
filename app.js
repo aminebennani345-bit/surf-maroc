@@ -26,7 +26,7 @@ const ang=(a,b)=>{const d=Math.abs(a-b)%360;return Math.min(d,360-d)};
 const inr=(d,a,b)=>((d-a)%360+360)%360<=((b-a)%360+360)%360;
 function score(s,h,p,sd,ws,wd,n,r){
   const [s0,s1]=s.sz,[p0,p1]=s.p,o0=s.o[0],o1=s.o[1],swc=Array.isArray(s.sw)?s.sw[0]:s.sw;
-  const fs=h<s0?Math.pow(h/s0,1.6):h<=s1?1:s.sat?Math.max(0,1-(h-s1)/.25):Math.max(.05,1-(h-s1)/(s1*.7));
+  const fs=h<s0?(s.smin?Math.max(0,1-(s0-h)/.4):Math.pow(h/s0,1.6)):h<=s1?1:s.sat?Math.max(0,1-(h-s1)/.25):Math.max(.05,1-(h-s1)/(s1*.7));
   const fp=p<p0?(s.pmin?Math.max(0,1-(p0-p)/1.5):Math.max(.15,1-(p0-p)/5)):p<=p1?1:(s.t==="beach"?Math.max(.4,1-(p-p1)/6):.95);
   const da=ang(sd,swc),fd=da<=25?1:da<=45?.8:da<=70?.5:.2;
   const om=(o0+(((o1-o0)%360+360)%360)/2)%360;let fw,wl;
