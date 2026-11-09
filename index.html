@@ -158,6 +158,12 @@ table.hm2{border-collapse:separate;border-spacing:2px;min-width:600px;width:100%
 .nav button[aria-current="page"]{opacity:1;background:rgba(255,255,255,.08)}
 .install{background:var(--surface);border:1px dashed var(--line);border-radius:8px;padding:12px 14px;font-size:13.5px;color:var(--muted);display:flex;gap:12px;align-items:center;justify-content:space-between}
 .install b{color:var(--ink)}
+.conf{font-size:13px;padding:8px 10px;border-radius:6px;background:var(--bg);color:var(--muted)}
+.conf b{color:var(--ink)} .conf.c2 b{color:var(--off)} .conf.c0 b{color:var(--warn)}
+.fb{display:flex;flex-direction:column;gap:8px;font-size:13.5px;border-top:1px solid var(--line);padding-top:12px}
+.fb div{display:flex;flex-wrap:wrap;gap:6px}
+.fb button{font:600 13px/1 var(--display);font-stretch:85%;border:1px solid var(--line);background:var(--surface);color:var(--ink);padding:9px 11px;border-radius:999px;cursor:pointer}
+.hm2 td button.lc{opacity:.45}
 button:focus-visible{outline:2px solid var(--sea);outline-offset:2px}
 @media (prefers-reduced-motion:reduce){.spin{animation:none}}
 </style>
@@ -182,7 +188,7 @@ button:focus-visible{outline:2px solid var(--sea);outline-offset:2px}
     <div class="gridwrap"><table class="hm2" id="grid"></table></div>
   </section>
   <section class="sec"><div class="sec-h"><h2>Les 6 spots</h2></div><div class="cards" id="cards-db"></div></section>
-  <p class="foot">Houle au large (GFS-Wave), vent moyen GFS et ICON, marée Open-Meteo : les mêmes modèles que Windguru. Les tailles sont celles de la houle au large ; les spots abrités en reçoivent moins. <a href="https://www.windguru.cz/" target="_blank" rel="noopener">Comparer sur Windguru</a> · Données <a href="https://open-meteo.com/" target="_blank" rel="noopener">Open-Meteo</a></p>
+  <p class="foot">Houle : moyenne GFS-Wave, Météo-France et ECMWF. Vent : moyenne GFS, ICON, ECMWF et Météo-France. Marée Open-Meteo. La fiabilité indique si ces modèles sont d'accord ; tes notes de session corrigent les scores de chaque spot. Les tailles sont celles de la houle au large ; les spots abrités en reçoivent moins. <a href="https://www.windguru.cz/" target="_blank" rel="noopener">Comparer sur Windguru</a> · Données <a href="https://open-meteo.com/" target="_blank" rel="noopener">Open-Meteo</a></p>
 </main>
 
 <main class="wrap" id="view-coast" hidden>

@@ -42,44 +42,68 @@ function score(s,h,p,sd,ws,wd,n,r){
 async function getJSON(u){const r=await fetch(u,{cache:"no-store"});if(!r.ok)throw new Error("HTTP "+r.status);return r.json()}
 const arr=x=>Array.isArray(x)?x:[x];
 const v=(a,i)=>a&&i>=0&&i<a.length?a[i]:null;
-function windAt(W1,W2,i){const us=[],vs=[];[W1,W2].forEach(w=>{const s=v(w.wind_speed_10m,i),d=v(w.wind_direction_10m,i);if(s!=null&&d!=null){us.push(s*Math.sin(d*Math.PI/180));vs.push(s*Math.cos(d*Math.PI/180))}});
-  if(!us.length)return [0,0,0];const U=us.reduce((a,b)=>a+b)/us.length,V=vs.reduce((a,b)=>a+b)/vs.length;
-  const g=[v(W1.wind_gusts_10m,i),v(W2.wind_gusts_10m,i)].filter(x=>x!=null);return [Math.hypot(U,V),(Math.atan2(U,V)*180/Math.PI+360)%360,g.length?Math.max(...g):0]}
+const WM=["gfs_seamless","icon_seamless","ecmwf_ifs025","meteofrance_seamless"];
+const MAR="&models=ncep_gfswave025,ecmwf_wam025,meteofrance_wave&hourly=swell_wave_height,swell_wave_period,swell_wave_direction,wave_height,wave_peak_period,wave_direction";
+const WIN="&models="+WM.join(",")+"&hourly=wind_speed_10m,wind_direction_10m,wind_gusts_10m";
+const mean=a=>a.reduce((x,y)=>x+y,0)/a.length;
+function circMean(ds){let x=0,y=0;ds.forEach(d=>{x+=Math.sin(d*Math.PI/180);y+=Math.cos(d*Math.PI/180)});return (Math.atan2(x,y)*180/Math.PI+360)%360}
+/* houle : moyenne GFS-Wave + Météo-France, ECMWF sert de contrôle ; période : GFS-Wave + pic ECMWF */
+function swellEns(M,i){const g=k=>v(M[k],i);
+  const sw=[g("swell_wave_height_ncep_gfswave025"),g("swell_wave_height_meteofrance_wave")].filter(x=>x!=null&&x>.05);
+  const ec=g("wave_height_ecmwf_wam025");const hs=sw.concat(ec!=null&&ec>.05?[ec]:[]);
+  const P=[g("swell_wave_period_ncep_gfswave025"),g("wave_peak_period_ecmwf_wam025")].filter(x=>x!=null&&x>0);
+  const Dd=[g("swell_wave_direction_ncep_gfswave025"),g("swell_wave_direction_meteofrance_wave"),g("wave_direction_ecmwf_wam025")].filter(x=>x!=null);
+  if(!hs.length||!P.length||!Dd.length)return null;
+  return {h:mean(sw.length?sw:hs),p:mean(P),sd:circMean(Dd),hs}}
+/* vent : moyenne vectorielle de GFS, ICON, ECMWF et Météo-France */
+function windEns(W,i){const mem=[],gs=[];WM.forEach(m=>{const s=v(W["wind_speed_10m_"+m],i),d=v(W["wind_direction_10m_"+m],i),g=v(W["wind_gusts_10m_"+m],i);if(s!=null&&d!=null)mem.push([s,d]);if(g!=null)gs.push(g)});
+  if(!mem.length)return {ws:0,wd:0,gu:0,mem:[[0,0]]};
+  const U=mean(mem.map(m=>m[0]*Math.sin(m[1]*Math.PI/180))),V=mean(mem.map(m=>m[0]*Math.cos(m[1]*Math.PI/180)));
+  return {ws:Math.hypot(U,V),wd:(Math.atan2(U,V)*180/Math.PI+360)%360,gu:gs.length?Math.max(...gs):0,mem}}
 function tideAt(sl,i){const w=sl.slice(Math.max(0,i-7),i+8).filter(x=>x!=null),c=v(sl,i);
   const n=c!=null&&w.length>2&&Math.max(...w)>Math.min(...w)?Math.round((c-Math.min(...w))/(Math.max(...w)-Math.min(...w))*100)/100:.5;
   const nx=v(sl,i+1);return [n,nx!=null&&c!=null&&nx>c?1:0]}
-function swellAt(G,B,i){let h=v(G.swell_wave_height,i),p=v(G.swell_wave_period,i),sd=v(G.swell_wave_direction,i);
-  if(h==null||p==null||sd==null){h=v(B.swell_wave_height,i);p=v(B.swell_wave_peak_period,i);sd=v(B.swell_wave_direction,i)}
-  return h==null||p==null||sd==null||h<=.05||p<=0?null:[h,p,sd]}
+/* score + fourchette : on recalcule avec chaque modèle de vent et chaque modèle de houle */
+function scoreEns(s,S,W,n,r){const [base,wl]=score(s,S.h,S.p,S.sd,W.ws,W.wd,n,r);let lo=base,hi=base;
+  W.mem.forEach(([a,b])=>{const x=score(s,S.h,S.p,S.sd,a,b,n,r)[0];lo=Math.min(lo,x);hi=Math.max(hi,x)});
+  S.hs.forEach(h=>{const x=score(s,h,S.p,S.sd,W.ws,W.wd,n,r)[0];lo=Math.min(lo,x);hi=Math.max(hi,x)});
+  return [base,wl,lo,hi]}
+const r1=x=>Math.round(x*10)/10;
 const MV="https://marine-api.open-meteo.com/v1/marine",FV="https://api.open-meteo.com/v1/forecast";
 async function fetchDB(){
   const W=`latitude=33.66&longitude=-7.97&timezone=${TZ}&forecast_days=4`,P=`latitude=33.533&longitude=-7.82&timezone=${TZ}&forecast_days=4`;
-  const [g,b,w1,w2]=await Promise.all([getJSON(`${MV}?${W}&models=ncep_gfswave025&hourly=swell_wave_height,swell_wave_period,swell_wave_direction`),getJSON(`${MV}?${W}&hourly=swell_wave_height,swell_wave_peak_period,swell_wave_direction,sea_level_height_msl`),
-    getJSON(`${FV}?${P}&hourly=wind_speed_10m,wind_direction_10m,wind_gusts_10m&models=gfs_seamless`),getJSON(`${FV}?${P}&hourly=wind_speed_10m,wind_direction_10m,wind_gusts_10m&models=icon_seamless`)]);
-  const G=g.hourly,B=b.hourly,T=G.time,sl=B.sea_level_height_msl||[];
+  const [m,b,w]=await Promise.all([getJSON(`${MV}?${W}${MAR}`),getJSON(`${MV}?${W}&hourly=sea_level_height_msl`),getJSON(`${FV}?${P}${WIN}`)]);
+  const M=m.hourly,T=M.time,sl=b.hourly.sea_level_height_msl||[],WH=w.hourly;
   const idx=T.map((t,i)=>i).filter(i=>{const h=+T[i].slice(11,13);return h>=7&&h<=19});
   const c=[],s={};DBS.forEach(x=>s[x.id]=[]);
-  idx.forEach(i=>{const sw=swellAt(G,B,i);const [ws,wd,gu]=windAt(w1.hourly,w2.hourly,i);const [n,r]=tideAt(sl,i);
-    if(!sw){c.push(null);DBS.forEach(x=>s[x.id].push(null));return}
-    c.push([Math.round(sw[0]*10)/10,Math.round(sw[1]),Math.round(sw[2]),Math.round(ws),Math.round(wd),Math.round(gu),n,r]);
-    DBS.forEach(x=>s[x.id].push(score(x,sw[0],sw[1],sw[2],ws,wd,n,r)))});
-  return {u:new Date().toISOString(),t:idx.map(i=>T[i]),c,s,t0:T[0],sl:sl.map(x=>x==null?null:Math.round(x*100)/100)};
+  idx.forEach(i=>{const S=swellEns(M,i),Wn=windEns(WH,i),[n,r]=tideAt(sl,i);
+    if(!S){c.push(null);DBS.forEach(x=>s[x.id].push(null));return}
+    c.push([r1(S.h),Math.round(S.p),Math.round(S.sd),Math.round(Wn.ws),Math.round(Wn.wd),Math.round(Wn.gu),n,r,r1(Math.min(...S.hs)),r1(Math.max(...S.hs)),Math.round(Math.min(...Wn.mem.map(x=>x[0]))),Math.round(Math.max(...Wn.mem.map(x=>x[0]))),Wn.mem.length]);
+    DBS.forEach(x=>s[x.id].push(scoreEns(x,S,Wn,n,r)))});
+  return {u:new Date().toISOString(),v:2,t:idx.map(i=>T[i]),c,s,t0:T[0],sl:sl.map(x=>x==null?null:Math.round(x*100)/100)};
 }
 function offPt(s){const b=s.sw[0]*Math.PI/180;return [Math.round((s.lat+.3*Math.cos(b))*1000)/1000,Math.round((s.lon+.3*Math.sin(b)/Math.cos(s.lat*Math.PI/180))*1000)/1000]}
 async function fetchCoast(){
   const OP=COAST.map(offPt);const tail=`&timezone=${TZ}&forecast_days=4`;
   const qo=`latitude=${OP.map(p=>p[0]).join(",")}&longitude=${OP.map(p=>p[1]).join(",")}`+tail,q=`latitude=${COAST.map(s=>s.lat).join(",")}&longitude=${COAST.map(s=>s.lon).join(",")}`+tail;
-  const [G,B,W1,W2]=(await Promise.all([getJSON(`${MV}?${qo}&models=ncep_gfswave025&hourly=swell_wave_height,swell_wave_period,swell_wave_direction`),getJSON(`${MV}?${qo}&hourly=swell_wave_height,swell_wave_peak_period,swell_wave_direction,sea_level_height_msl`),
-    getJSON(`${FV}?${q}&hourly=wind_speed_10m,wind_direction_10m,wind_gusts_10m&models=gfs_seamless`),getJSON(`${FV}?${q}&hourly=wind_speed_10m,wind_direction_10m,wind_gusts_10m&models=icon_seamless`)])).map(arr);
-  const T=G[0].hourly.time,idx=T.map((t,i)=>i).filter(i=>[8,11,14,17].includes(+T[i].slice(11,13)));const s={};
-  COAST.forEach((sp,k)=>{const g=G[k].hourly,b=B[k].hourly,sl=b.sea_level_height_msl||[];
-    s[sp.id]=idx.map(i=>{const sw=swellAt(g,b,i);if(!sw)return null;const [ws,wd,gu]=windAt(W1[k].hourly,W2[k].hourly,i);const [n,r]=tideAt(sl,i);const [sc,wl]=score(sp,sw[0],sw[1],sw[2],ws,wd,n,r);
-      return [Math.round(sw[0]*10)/10,Math.round(sw[1]),Math.round(sw[2]),Math.round(ws),Math.round(wd),Math.round(gu),n,r,sc,wl]})});
-  return {u:new Date().toISOString(),t:idx.map(i=>T[i]),s};
+  const [Ms,Bs,Ws]=(await Promise.all([getJSON(`${MV}?${qo}${MAR}`),getJSON(`${MV}?${qo}&hourly=sea_level_height_msl`),getJSON(`${FV}?${q}${WIN}`)])).map(arr);
+  const T=Ms[0].hourly.time,idx=T.map((t,i)=>i).filter(i=>[8,11,14,17].includes(+T[i].slice(11,13)));const s={};
+  COAST.forEach((sp,k)=>{const M=Ms[k].hourly,sl=Bs[k].hourly.sea_level_height_msl||[],WH=Ws[k].hourly;
+    s[sp.id]=idx.map(i=>{const S=swellEns(M,i);if(!S)return null;const Wn=windEns(WH,i),[n,r]=tideAt(sl,i),[sc,wl,lo,hi]=scoreEns(sp,S,Wn,n,r);
+      return [r1(S.h),Math.round(S.p),Math.round(S.sd),Math.round(Wn.ws),Math.round(Wn.wd),Math.round(Wn.gu),n,r,sc,wl,lo,hi]})});
+  return {u:new Date().toISOString(),v:2,t:idx.map(i=>T[i]),s};
 }
+/* fiabilité : écart entre modèles + échéance */
+function conf(lo,hi,t){const rg=hi-lo,lead=(ms(t)-ms(nowLocal()))/3.6e6;let c=rg<=1.5?2:rg<=3?1:0;if(lead>48)c=Math.min(c,1);if(lead>72&&rg>1.5)c=0;return c}
+const CONF=["faible","moyenne","haute"];
+/* retours de session : correction par spot */
+let FB=load("fb")||[];
+function bias(id){const a=FB.filter(f=>f.id===id).slice(-10);if(!a.length)return 0;return Math.max(-3,Math.min(3,mean(a.map(f=>f.real-f.pred))*a.length/(a.length+4)))}
+const adj=(id,x)=>Math.max(0,Math.min(10,r1(x+bias(id))));
+function rate(id,t,pred,real){FB=FB.filter(f=>!(f.id===id&&f.t===t));FB.push({id,t,pred,real});FB=FB.slice(-200);save("fb",FB)}
 
 /* ---------- état ---------- */
-let D=load("db-data"),C=load("co-data"),selJ=null,tabDay=null,mode="now",openReg=null;
+let D=load("db-data"),C=load("co-data");if(D&&D.v!==2)D=null;if(C&&C.v!==2)C=null;let selJ=null,tabDay=null,mode="now",openReg=null;
 const busy={db:false,co:false},err={db:"",co:""};
 function staleMin(x){return x?(Date.now()-Date.parse(x.u))/60000:1e9}
 async function refreshDB(){if(busy.db)return;busy.db=true;err.db="";renderDBHead();try{D=await fetchDB();save("db-data",D);selJ=null;tabDay=null}catch(e){err.db=(navigator.onLine===false?"Pas de connexion.":"Les prévisions ne répondent pas pour l'instant.")+(D?" Les dernières données restent affichées.":"")}busy.db=false;renderDB()}
@@ -89,7 +113,8 @@ async function refreshCO(){if(busy.co)return;busy.co=true;err.co="";renderCOHead
 function nowJ(F,back){if(!F)return -1;const n=ms(nowLocal())-(back||30)*60000;const j=F.t.findIndex(t=>ms(t)>=n);return j<0?F.t.length-1:j}
 const hh=(F,j)=>parseInt(F.t[j].slice(11,13),10)+"h";
 const daysOf=F=>F?[...new Set(F.t.map(t=>t.slice(0,10)))]:[];
-const scD=(id,j)=>{const a=D&&D.s[id];return a&&a[j]?a[j][0]:null};
+const scD=(id,j)=>{const a=D&&D.s[id];return a&&a[j]?adj(id,a[j][0]):null};
+const rgD=(id,j)=>{const a=D.s[id][j];const b=bias(id);return [Math.max(0,r1(a[2]+b)),Math.min(10,r1(a[3]+b))]};
 function renderDBHead(){const f=$("fresh-db");f.textContent=busy.db&&!D?"Chargement des prévisions…":D?"Prévisions "+ago(D.u):"Pas encore de prévisions";f.classList.toggle("old",staleMin(D)>240);
   const b=$("refresh-db");b.disabled=busy.db;b.innerHTML=busy.db?'<span class="spin"></span>Actualisation…':"Actualiser";const g=$("msg-db");g.hidden=!err.db;g.textContent=err.db}
 function reasons(s,j){const c=D.c[j];if(!c)return [];const [h,p,sd,ws,wd,gu,n,r]=c,wl=D.s[s.id][j][1],out=[];const tr=s.tide[tideCat(n)];
@@ -113,8 +138,12 @@ function renderDB(){
   if(!R.length){hero.innerHTML=`<span class="eyebrow">Spot à cibler</span><h3>Pas de données</h3>`;rank.innerHTML="";conds.innerHTML=""}
   else{const top=R[0],L=lab(top.v);hero.style.setProperty("--sc",`var(${L[2]})`);
     hero.innerHTML=`<div class="row"><div style="min-width:0"><span class="eyebrow">Spot à cibler</span><h3 style="margin-top:6px">${top.s.n}</h3><div class="when">${dayLabel(D.t[j].slice(0,10))} à ${hh(D,j)} · ${TN[top.s.t]} · ${top.s.lv}</div></div><div style="text-align:right"><div class="big">${fmt(top.v)}<small>/10</small></div><span class="pill" style="--sc:var(${L[2]})">${L[1]}</span></div></div>
+    ${(()=>{const [lo,hi]=rgD(top.s.id,j),cf=conf(lo,hi,D.t[j]),c=D.c[j];const div=[];if(c&&c[11]-c[10]>=8)div.push(`vent ${c[10]} à ${c[11]} km/h selon les modèles`);if(c&&c[9]-c[8]>=.6)div.push(`houle ${fmt(c[8])} à ${fmt(c[9])} m`);const bb=bias(top.s.id);
+      return `<div class="conf c${cf}"><b>Fiabilité ${CONF[cf]}</b> · entre ${fmt(lo)} et ${fmt(hi)} selon les modèles${div.length?" ("+div.join(", ")+")":cf===2?", ils sont d'accord":""}${bb?` · ajusté de ${bb>0?"+":""}${fmt(r1(bb))} d'après tes retours`:""}</div>`})()}
     <ul class="why">${reasons(top.s,j).map(([k,t])=>`<li><i class="${k}">${k==="ok"?"✓":k==="ko"?"✕":"~"}</i><span>${t}</span></li>`).join("")}</ul>
+    ${ms(D.t[j])<=ms(nowLocal())+3600000?`<div class="fb" id="fb"><span>Tu y étais ? C'était comment à ${top.s.n} ?</span><div>${[["Nul",1],["Moyen",4],["Bon",6],["Très bon",8],["Épique",10]].map(([l,x])=>`<button type="button" data-v="${x}">${l}</button>`).join("")}</div></div>`:""}
     ${top.v<3?`<p class="tip">Aucun spot ne marche vraiment à ce moment. Regarde les meilleurs créneaux plus bas.</p>`:R[1]?`<p class="tip">Plan B : <b>${R[1].s.n}</b> ${fmt(R[1].v)}/10.</p>`:""}`;
+    const fbEl=$("fb");if(fbEl)fbEl.querySelectorAll("button").forEach(b=>b.onclick=()=>{const raw=D.s[top.s.id][j][0];rate(top.s.id,D.t[j],raw,+b.dataset.v);const bb=bias(top.s.id);fbEl.innerHTML=`<span>Merci. ${top.s.n} est maintenant ajusté de ${bb>0?"+":""}${fmt(r1(bb))} d'après tes ${FB.filter(f=>f.id===top.s.id).length} retour(s).</span>`;setTimeout(renderDB,2500)});
     rank.innerHTML=R.map((x,i)=>{const l=lab(x.v);return `<button type="button" data-id="${x.s.id}" aria-current="${i===0}" style="--sc:var(${l[2]})"><span class="n">${i+1}</span><span class="nm">${x.s.n}<small>${l[1]} · ${WLN[x.wl]}</small></span><span class="bar"><i style="width:${Math.max(3,x.v*10)}%"></i></span><span class="v">${fmt(x.v)}</span></button>`}).join("");
     rank.querySelectorAll("button").forEach(b=>b.onclick=()=>{const el=$("card-"+b.dataset.id);if(el)el.scrollIntoView({behavior:smooth(),block:"center"})});
     const c=D.c[j];conds.innerHTML=c?`<div class="tile"><span class="eyebrow">Houle au large</span><div class="val">${fmt(c[0])} <small>m</small> · ${c[1]} <small>s</small></div><p>de ${dl(c[2])} (${c[2]}°)</p></div>
@@ -127,13 +156,13 @@ function renderDB(){
   $("days").querySelectorAll("button[data-j]").forEach(b=>b.onclick=()=>{selJ=+b.dataset.j;tabDay=D.t[selJ].slice(0,10);renderDB();window.scrollTo({top:0,behavior:smooth()})});
   renderGrid();
 }
-function renderGrid(){const g=$("grid"),tb=$("dtabs");$("legend").innerHTML=SCL.slice().reverse().map(x=>`<span style="--sc:var(${x[2]})"><i></i>${x[1]}</span>`).join("");
+function renderGrid(){const g=$("grid"),tb=$("dtabs");$("legend").innerHTML=SCL.slice().reverse().map(x=>`<span style="--sc:var(${x[2]})"><i></i>${x[1]}</span>`).join("")+`<span style="--sc:var(--s3)"><i style="opacity:.4"></i>pâle = modèles en désaccord</span>`;
   const ds=daysOf(D);if(!tabDay||!ds.includes(tabDay))tabDay=D.t[selJ==null?nowJ(D):selJ].slice(0,10);
   tb.innerHTML=ds.map(d=>`<button class="chip" type="button" data-d="${d}" aria-pressed="${d===tabDay}">${dayLabel(d)}</button>`).join("");tb.querySelectorAll("button").forEach(b=>b.onclick=()=>{tabDay=b.dataset.d;renderGrid()});
   const js=D.t.map((t,j)=>j).filter(j=>D.t[j].slice(0,10)===tabDay),nj=nowJ(D),sj=selJ==null?nj:selJ;
   let h=`<tr><th></th>${js.map(j=>`<th>${hh(D,j)}</th>`).join("")}</tr>`;
   DBS.forEach(s=>{h+=`<tr><th class="rowh" scope="row">${s.n}</th>${js.map(j=>{const x=scD(s.id,j);if(x==null)return `<td><button class="na" type="button" disabled>–</button></td>`;const l=lab(x);
-    return `<td><button type="button" data-j="${j}" class="${j===sj?"sel":""} ${j===nj?"now":""}" style="--sc:var(${l[2]})" aria-label="${s.n} ${hh(D,j)} : ${fmt(x)} sur 10">${fmt(x)}</button></td>`}).join("")}</tr>`});
+    const [lo,hi]=rgD(s.id,j),cf=conf(lo,hi,D.t[j]);return `<td><button type="button" data-j="${j}" class="${j===sj?"sel":""} ${j===nj?"now":""} ${cf===0?"lc":""}" title="fiabilité ${CONF[cf]} : ${fmt(lo)}–${fmt(hi)}" style="--sc:var(${l[2]})" aria-label="${s.n} ${hh(D,j)} : ${fmt(x)} sur 10">${fmt(x)}</button></td>`}).join("")}</tr>`});
   h+=`<tr><th class="rowh" scope="row" style="font:500 10.5px var(--mono);color:var(--muted)">Marée</th>${js.map(j=>{const c=D.c[j];return `<th>${c?["B","M","H"][tideCat(c[6])]+(c[7]?"↗":"↘"):""}</th>`}).join("")}</tr>`;
   h+=`<tr><th class="rowh" scope="row" style="font:500 10.5px var(--mono);color:var(--muted)">Houle · vent</th>${js.map(j=>{const c=D.c[j];return `<th>${c?fmt(c[0])+" m<br>"+c[3]+"<br>"+dirName(c[4]):""}</th>`}).join("")}</tr>`;
   g.innerHTML=h;g.querySelectorAll("button[data-j]").forEach(b=>b.onclick=()=>{selJ=+b.dataset.j;renderDB();$("hero").scrollIntoView({behavior:smooth(),block:"start"})})}
@@ -145,7 +174,7 @@ function renderCardsDB(){$("cards-db").innerHTML=DBS.map(s=>`<article class="car
 function renderCOHead(){const f=$("fresh-co");f.textContent=busy.co&&!C?"Chargement des prévisions…":C?"Prévisions "+ago(C.u):"Pas encore de prévisions";f.classList.toggle("old",staleMin(C)>360);
   const b=$("refresh-co");b.disabled=busy.co;b.innerHTML=busy.co?'<span class="spin"></span>Actualisation…':"Actualiser";const g=$("msg-co");g.hidden=!err.co;g.textContent=err.co}
 function stepsCO(){if(!C)return [];if(mode==="now")return [nowJ(C,90)];const today=nowLocal().slice(0,10),n=ms(nowLocal())-90*60000;return C.t.map((t,j)=>j).filter(j=>C.t[j].slice(0,10)===mode&&(mode!==today||ms(C.t[j])>=n))}
-function bestCO(id,st){const rows=C.s[id];if(!rows)return null;let b=null;st.forEach(j=>{const r=rows[j];if(r&&(!b||r[8]>b.sc))b={sc:r[8],j,r}});return b}
+function bestCO(id,st){const rows=C.s[id];if(!rows)return null;let b=null;st.forEach(j=>{const r=rows[j];if(r){const x=adj(id,r[8]);if(!b||x>b.sc)b={sc:x,j,r,cf:conf(r[10],r[11],C.t[j])}}});return b}
 const condHTML=r=>`<span><b>${fmt(r[0])} m</b> · ${r[1]} s · houle ${dl(r[2])}</span><span class="w${r[9]}">vent ${r[3]} km/h ${dl(r[4])} · ${WLN[r[9]]}</span><span>marée ${["basse","mi-marée","haute"][tideCat(r[6])]}${r[7]?" ↗":" ↘"}</span>`;
 function renderCO(){renderCOHead();const tb=$("ctabs"),el=$("rcs");
   if(!C){tb.innerHTML="";el.innerHTML=`<p class="tip">${busy.co?"Calcul des 35 spots en cours…":"Les prévisions s'afficheront ici."}</p>`;return}
@@ -156,7 +185,7 @@ function renderCO(){renderCOHead();const tb=$("ctabs"),el=$("rcs");
   Object.entries(REG).forEach(([k,rn])=>{const ranked=COAST.filter(s=>s.r===k).map(s=>({s,b:bestCO(s.id,st)})).filter(x=>x.b).sort((a,b)=>b.b.sc-a.b.sc);
     if(!ranked.length){html+=`<div class="rc"><span class="rn">${rn}</span><p class="alt">Plus de créneau de jour. Regarde demain.</p><div class="meter"></div></div>`;return}
     const top=ranked[0],L=lab(top.b.sc);
-    html+=`<button class="rc" type="button" data-r="${k}" aria-expanded="${openReg===k}" style="--sc:var(${L[2]})"><div class="tp"><div style="min-width:0"><span class="rn">${rn}</span><h3>${top.s.n}</h3><div class="wh">${dayLabel(C.t[top.b.j].slice(0,10)).toLowerCase()} à ${hh(C,top.b.j)}</div></div><div class="scr"><b>${fmt(top.b.sc)}<small>/10</small></b><span class="pill">${L[1]}</span></div></div>
+    html+=`<button class="rc" type="button" data-r="${k}" aria-expanded="${openReg===k}" style="--sc:var(${L[2]})"><div class="tp"><div style="min-width:0"><span class="rn">${rn}</span><h3>${top.s.n}</h3><div class="wh">${dayLabel(C.t[top.b.j].slice(0,10)).toLowerCase()} à ${hh(C,top.b.j)} · fiabilité ${CONF[top.b.cf]}</div></div><div class="scr"><b>${fmt(top.b.sc)}<small>/10</small></b><span class="pill">${L[1]}</span></div></div>
       <div class="cond">${condHTML(top.b.r)}</div>${ranked[1]?`<p class="alt">Ensuite : ${ranked.slice(1,3).map(a=>`<b>${a.s.n}</b> ${fmt(a.b.sc)}`).join(" · ")}</p>`:""}<div class="meter"><i style="width:${Math.max(3,top.b.sc*10)}%"></i></div></button>`;
     if(openReg===k)html+=`<div class="rdet">${ranked.map(x=>{const l=lab(x.b.sc);return `<button type="button" style="--sc:var(${l[2]})"><span class="nm">${x.s.n}<small>${TN[x.s.t]} · offshore ${x.s.o[2]} · ${x.s.tt.toLowerCase()}</small></span><span class="ph">${hh(C,x.b.j)}</span><span class="v">${fmt(x.b.sc)}</span></button>`}).join("")}</div>`});
   el.innerHTML=html;el.querySelectorAll(".rc[data-r]").forEach(b=>b.onclick=()=>{openReg=openReg===b.dataset.r?null:b.dataset.r;renderCO()})}
