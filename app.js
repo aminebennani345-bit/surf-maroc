@@ -71,7 +71,7 @@ function scoreEns(s,S,W,n,r){const [base,wl]=score(s,S.h,S.p,S.sd,W.ws,W.wd,n,r)
 const r1=x=>Math.round(x*10)/10;
 const MV="https://marine-api.open-meteo.com/v1/marine",FV="https://api.open-meteo.com/v1/forecast";
 async function fetchDB(){
-  const W=`latitude=33.66&longitude=-7.97&timezone=${TZ}&forecast_days=4`,P=`latitude=33.533&longitude=-7.82&timezone=${TZ}&forecast_days=4`;
+  const W=`latitude=33.58&longitude=-7.87&timezone=${TZ}&forecast_days=4`,P=`latitude=33.533&longitude=-7.82&timezone=${TZ}&forecast_days=4`;
   const [m,b,w]=await Promise.all([getJSON(`${MV}?${W}${MAR}`),getJSON(`${MV}?${W}&hourly=sea_level_height_msl`),getJSON(`${FV}?${P}${WIN}`)]);
   const M=m.hourly,T=M.time,sl=b.hourly.sea_level_height_msl||[],WH=w.hourly;
   const idx=T.map((t,i)=>i).filter(i=>{const h=+T[i].slice(11,13);return h>=7&&h<=19});
@@ -80,7 +80,7 @@ async function fetchDB(){
     if(!S){c.push(null);DBS.forEach(x=>s[x.id].push(null));return}
     c.push([r1(S.h),Math.round(S.p),Math.round(S.sd),Math.round(Wn.ws),Math.round(Wn.wd),Math.round(Wn.gu),n,r,r1(Math.min(...S.hs)),r1(Math.max(...S.hs)),Math.round(Math.min(...Wn.mem.map(x=>x[0]))),Math.round(Math.max(...Wn.mem.map(x=>x[0]))),Wn.mem.length]);
     DBS.forEach(x=>s[x.id].push(scoreEns(x,S,Wn,n,r)))});
-  return {u:new Date().toISOString(),v:2,t:idx.map(i=>T[i]),c,s,t0:T[0],sl:sl.map(x=>x==null?null:Math.round(x*100)/100)};
+  return {u:new Date().toISOString(),v:2,rv:RV,t:idx.map(i=>T[i]),c,s,t0:T[0],sl:sl.map(x=>x==null?null:Math.round(x*100)/100)};
 }
 function offPt(s){const b=s.sw[0]*Math.PI/180;return [Math.round((s.lat+.3*Math.cos(b))*1000)/1000,Math.round((s.lon+.3*Math.sin(b)/Math.cos(s.lat*Math.PI/180))*1000)/1000]}
 async function fetchCoast(){
@@ -91,7 +91,7 @@ async function fetchCoast(){
   COAST.forEach((sp,k)=>{const M=Ms[k].hourly,sl=Bs[k].hourly.sea_level_height_msl||[],WH=Ws[k].hourly;
     s[sp.id]=idx.map(i=>{const S=swellEns(M,i);if(!S)return null;const Wn=windEns(WH,i),[n,r]=tideAt(sl,i),[sc,wl,lo,hi]=scoreEns(sp,S,Wn,n,r);
       return [r1(S.h),Math.round(S.p),Math.round(S.sd),Math.round(Wn.ws),Math.round(Wn.wd),Math.round(Wn.gu),n,r,sc,wl,lo,hi]})});
-  return {u:new Date().toISOString(),v:2,t:idx.map(i=>T[i]),s};
+  return {u:new Date().toISOString(),v:2,rv:RV,t:idx.map(i=>T[i]),s};
 }
 /* fiabilité : écart entre modèles + échéance */
 function conf(lo,hi,t){const rg=hi-lo,lead=(ms(t)-ms(nowLocal()))/3.6e6;let c=rg<=1.5?2:rg<=3?1:0;if(lead>48)c=Math.min(c,1);if(lead>72&&rg>1.5)c=0;return c}
@@ -103,7 +103,8 @@ const adj=(id,x)=>Math.max(0,Math.min(10,r1(x+bias(id))));
 function rate(id,t,pred,real){FB=FB.filter(f=>!(f.id===id&&f.t===t));FB.push({id,t,pred,real});FB=FB.slice(-200);save("fb",FB)}
 
 /* ---------- état ---------- */
-let D=load("db-data"),C=load("co-data");if(D&&D.v!==2)D=null;if(C&&C.v!==2)C=null;let selJ=null,tabDay=null,mode="now",openReg=null;
+/* RV : version des règles des spots. À chaque changement de règle, les anciens scores sont jetés et recalculés. */
+const RV=3;let D=load("db-data"),C=load("co-data");if(D&&D.rv!==RV)D=null;if(C&&C.rv!==RV)C=null;let selJ=null,tabDay=null,mode="now",openReg=null;
 const busy={db:false,co:false},err={db:"",co:""};
 function staleMin(x){return x?(Date.now()-Date.parse(x.u))/60000:1e9}
 async function refreshDB(){if(busy.db)return;busy.db=true;err.db="";renderDBHead();try{D=await fetchDB();save("db-data",D);selJ=null;tabDay=null}catch(e){err.db=(navigator.onLine===false?"Pas de connexion.":"Les prévisions ne répondent pas pour l'instant.")+(D?" Les dernières données restent affichées.":"")}busy.db=false;renderDB()}
