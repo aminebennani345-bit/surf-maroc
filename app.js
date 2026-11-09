@@ -23,11 +23,14 @@ const load=k=>{try{return JSON.parse(localStorage.getItem(k)||"null")}catch(e){r
 const save=(k,v)=>{try{localStorage.setItem(k,JSON.stringify(v))}catch(e){}};
 
 /* ---------- score ---------- */
+/* coefficient : idéal entre cf[0] et cf[1] ; en dessous (mortes-eaux) un peu moins bien ; au-dessus (vives-eaux) ça va trop vite, trop de courant */
+function coefRate(s,k){if(!s.cf||k==null)return 1;const [lo,hi]=s.cf;if(k<lo)return .85;if(k<=hi)return 1;return Math.max(.3,1-(k-hi)/15*.65)}
+const coefName=k=>k<50?"mortes-eaux":k<75?"coefficient moyen":k<95?"vives-eaux":"grandes vives-eaux";
 /* note de marée : règle fine du spot (tw = [n min, n max, sens -1 tous / 1 montante / 0 descendante, note]) sinon basse/mi/haute */
 function tideRate(s,n,r){if(s.tw){for(const [a,b,d,v] of s.tw)if(n>=a&&n<b&&(d<0||d===r))return v;return 1}return s.tide[tideCat(n)]}
 const ang=(a,b)=>{const d=Math.abs(a-b)%360;return Math.min(d,360-d)};
 const inr=(d,a,b)=>((d-a)%360+360)%360<=((b-a)%360+360)%360;
-function score(s,h,p,sd,ws,wd,n,r){
+function score(s,h,p,sd,ws,wd,n,r,k){
   const [s0,s1]=s.sz,[p0,p1]=s.p,o0=s.o[0],o1=s.o[1],swc=Array.isArray(s.sw)?s.sw[0]:s.sw;
   const fs=h<s0?(s.smin?Math.max(0,1-(s0-h)/.4):Math.pow(h/s0,1.6)):h<=s1?1:s.sat?Math.max(0,1-(h-s1)/(s.satw||.25)):Math.max(.05,1-(h-s1)/(s1*.7));
   const fp=p<p0?(s.pmin?Math.max(0,1-(p0-p)/1.5):Math.max(.15,1-(p0-p)/5)):p<=p1?1:s.pmax?Math.max(0,1-(p-p1)/1.5):(s.t==="beach"?Math.max(.4,1-(p-p1)/6):.95);
@@ -38,7 +41,8 @@ function score(s,h,p,sd,ws,wd,n,r){
   else if(ang(wd,(om+180)%360)<=60){fw=Math.max(.1,.6-(ws-5)/20);wl=3}
   else{fw=Math.max(.2,.85-(ws-5)/25);wl=2}
   let ft={2:1,1:.75,0:.4}[tideRate(s,n,r)];if(s.rise&&r)ft=Math.min(1,ft+.1);
-  return [Math.round(100*fs*fp*fd*fw*ft)/10,wl];
+  const fk=coefRate(s,k);
+  return [Math.round(100*fs*fp*fd*fw*ft*fk)/10,wl];
 }
 
 /* ---------- Open-Meteo ---------- */
@@ -65,27 +69,31 @@ function windEns(W,i){const mem=[],gs=[];WM.forEach(m=>{const s=v(W["wind_speed_
   return {ws:Math.hypot(U,V),wd:(Math.atan2(U,V)*180/Math.PI+360)%360,gu:gs.length?Math.max(...gs):0,mem}}
 function tideAt(sl,i){const w=sl.slice(Math.max(0,i-7),i+8).filter(x=>x!=null),c=v(sl,i);
   const n=c!=null&&w.length>2&&Math.max(...w)>Math.min(...w)?Math.round((c-Math.min(...w))/(Math.max(...w)-Math.min(...w))*100)/100:.5;
-  const nx=v(sl,i+1);return [n,nx!=null&&c!=null&&nx>c?1:0]}
+  const nx=v(sl,i+1);return [n,nx!=null&&c!=null&&nx>c?1:0,w.length>2?Math.max(...w)-Math.min(...w):null]}
 /* score + fourchette : on recalcule avec chaque modèle de vent et chaque modèle de houle */
-function scoreEns(s,S,W,n,r){const [base,wl]=score(s,S.h,S.p,S.sd,W.ws,W.wd,n,r);let lo=base,hi=base;
-  W.mem.forEach(([a,b])=>{const x=score(s,S.h,S.p,S.sd,a,b,n,r)[0];lo=Math.min(lo,x);hi=Math.max(hi,x)});
-  S.hs.forEach(h=>{const x=score(s,h,S.p,S.sd,W.ws,W.wd,n,r)[0];lo=Math.min(lo,x);hi=Math.max(hi,x)});
+function scoreEns(s,S,W,n,r,k){const [base,wl]=score(s,S.h,S.p,S.sd,W.ws,W.wd,n,r,k);let lo=base,hi=base;
+  W.mem.forEach(([a,b])=>{const x=score(s,S.h,S.p,S.sd,a,b,n,r,k)[0];lo=Math.min(lo,x);hi=Math.max(hi,x)});
+  S.hs.forEach(h=>{const x=score(s,h,S.p,S.sd,W.ws,W.wd,n,r,k)[0];lo=Math.min(lo,x);hi=Math.max(hi,x)});
   return [base,wl,lo,hi]}
 const r1=x=>Math.round(x*10)/10;
 const MV="https://marine-api.open-meteo.com/v1/marine",FV="https://api.open-meteo.com/v1/forecast";
+async function springRange(pt){const key="sr-"+pt.join(",");const c=load(key);if(c&&Date.now()-c.t<7*864e5)return c.v;
+  try{const d=await getJSON(`${MV}?latitude=${pt[0]}&longitude=${pt[1]}&hourly=sea_level_height_msl&past_days=60&forecast_days=1&timezone=${TZ}`);const sl=d.hourly.sea_level_height_msl||[],rg=[];
+    for(let i=0;i+25<=sl.length;i+=24){const w=sl.slice(i,i+25).filter(x=>x!=null);if(w.length>20)rg.push(Math.max(...w)-Math.min(...w))}
+    if(rg.length<20)return null;rg.sort((x,y)=>y-x);const v=mean(rg.slice(0,Math.ceil(rg.length*.2)));save(key,{t:Date.now(),v});return v}catch(e){return null}}
 async function fetchDB(){
   const per=DBS.every(s=>s.lat!=null),tail=`&timezone=${TZ}&forecast_days=4`;
   const WP=per?DBS.map(s=>offPt(s,CFG.offDist)):[CFG.wave],PP=per?DBS.map(s=>[s.lat,s.lon]):[CFG.wind];
   const qs=pts=>`latitude=${pts.map(p=>p[0]).join(",")}&longitude=${pts.map(p=>p[1]).join(",")}`+tail;
-  const [Ms,Bs,Ws]=(await Promise.all([getJSON(`${MV}?${qs(WP)}${MAR}`),getJSON(`${MV}?${qs([WP[0]])}&hourly=sea_level_height_msl`),getJSON(`${FV}?${qs(PP)}${WIN}`)])).map(arr);
+  const [Ms,Bs,Ws,SR]=await Promise.all([getJSON(`${MV}?${qs(WP)}${MAR}`),getJSON(`${MV}?${qs([WP[0]])}&hourly=sea_level_height_msl`),getJSON(`${FV}?${qs(PP)}${WIN}`),springRange(WP[0])]).then(x=>[arr(x[0]),arr(x[1]),arr(x[2]),x[3]]);
   const T=Ms[0].hourly.time,sl=Bs[0].hourly.sea_level_height_msl||[];
   const idx=T.map((t,i)=>i).filter(i=>{const h=+T[i].slice(11,13);return h>=7&&h<=19});
-  const row=(S,Wn,n,r)=>[r1(S.h),Math.round(S.p),Math.round(S.sd),Math.round(Wn.ws),Math.round(Wn.wd),Math.round(Wn.gu),n,r,r1(Math.min(...S.hs)),r1(Math.max(...S.hs)),Math.round(Math.min(...Wn.mem.map(x=>x[0]))),Math.round(Math.max(...Wn.mem.map(x=>x[0]))),Wn.mem.length];
+  const row=(S,Wn,n,r,k)=>[r1(S.h),Math.round(S.p),Math.round(S.sd),Math.round(Wn.ws),Math.round(Wn.wd),Math.round(Wn.gu),n,r,r1(Math.min(...S.hs)),r1(Math.max(...S.hs)),Math.round(Math.min(...Wn.mem.map(x=>x[0]))),Math.round(Math.max(...Wn.mem.map(x=>x[0]))),Wn.mem.length,k];
   const c=[],s={},cs={};DBS.forEach(x=>{s[x.id]=[];cs[x.id]=[]});
-  idx.forEach(i=>{const [n,r]=tideAt(sl,i);let ref=null;
+  idx.forEach(i=>{const [n,r,rg]=tideAt(sl,i),kc=SR&&rg!=null?Math.max(20,Math.min(120,Math.round(95*rg/SR))):null;let ref=null;
     DBS.forEach((x,k)=>{const M=Ms[per?k:0].hourly,WH=Ws[per?k:0].hourly,S=swellEns(M,i),Wn=windEns(WH,i);
       if(!S){s[x.id].push(null);cs[x.id].push(null);return}
-      const rw=row(S,Wn,n,r);cs[x.id].push(rw);if(!ref)ref=rw;s[x.id].push(scoreEns(x,S,Wn,n,r))});
+      const rw=row(S,Wn,n,r,kc);cs[x.id].push(rw);if(!ref)ref=rw;s[x.id].push(scoreEns(x,S,Wn,n,r,kc))});
     c.push(ref)});
   const out={u:new Date().toISOString(),v:2,rv:RV,t:idx.map(i=>T[i]),c,s,t0:T[0],sl:sl.map(x=>x==null?null:Math.round(x*100)/100)};
   if(per)out.cs=cs;return out;
@@ -94,11 +102,11 @@ function offPt(s,dist){const d=dist||.3,b=(Array.isArray(s.sw)?s.sw[0]:s.sw)*Mat
 async function fetchCoast(){
   const OP=COAST.map(offPt);const tail=`&timezone=${TZ}&forecast_days=4`;
   const qo=`latitude=${OP.map(p=>p[0]).join(",")}&longitude=${OP.map(p=>p[1]).join(",")}`+tail,q=`latitude=${COAST.map(s=>s.lat).join(",")}&longitude=${COAST.map(s=>s.lon).join(",")}`+tail;
-  const [Ms,Bs,Ws]=(await Promise.all([getJSON(`${MV}?${qo}${MAR}`),getJSON(`${MV}?${qo}&hourly=sea_level_height_msl`),getJSON(`${FV}?${q}${WIN}`)])).map(arr);
+  const REF=[33.58,-7.87];const [Ms,Bs,Ws,RB,SR]=await Promise.all([getJSON(`${MV}?${qo}${MAR}`),getJSON(`${MV}?${qo}&hourly=sea_level_height_msl`),getJSON(`${FV}?${q}${WIN}`),getJSON(`${MV}?latitude=${REF[0]}&longitude=${REF[1]}&hourly=sea_level_height_msl`+tail),springRange(REF)]).then(x=>[arr(x[0]),arr(x[1]),arr(x[2]),x[3],x[4]]);const rsl=RB.hourly.sea_level_height_msl||[];
   const T=Ms[0].hourly.time,idx=T.map((t,i)=>i).filter(i=>[8,11,14,17].includes(+T[i].slice(11,13)));const s={};
   COAST.forEach((sp,k)=>{const M=Ms[k].hourly,sl=Bs[k].hourly.sea_level_height_msl||[],WH=Ws[k].hourly;
-    s[sp.id]=idx.map(i=>{const S=swellEns(M,i);if(!S)return null;const Wn=windEns(WH,i),[n,r]=tideAt(sl,i),[sc,wl,lo,hi]=scoreEns(sp,S,Wn,n,r);
-      return [r1(S.h),Math.round(S.p),Math.round(S.sd),Math.round(Wn.ws),Math.round(Wn.wd),Math.round(Wn.gu),n,r,sc,wl,lo,hi]})});
+    s[sp.id]=idx.map(i=>{const S=swellEns(M,i);if(!S)return null;const rg=tideAt(rsl,i)[2],k=SR&&rg!=null?Math.max(20,Math.min(120,Math.round(95*rg/SR))):null;const Wn=windEns(WH,i),[n,r]=tideAt(sl,i),[sc,wl,lo,hi]=scoreEns(sp,S,Wn,n,r,k);
+      return [r1(S.h),Math.round(S.p),Math.round(S.sd),Math.round(Wn.ws),Math.round(Wn.wd),Math.round(Wn.gu),n,r,sc,wl,lo,hi,k]})});
   return {u:new Date().toISOString(),v:2,rv:RV,t:idx.map(i=>T[i]),s};
 }
 /* fiabilité : écart entre modèles + échéance */
@@ -112,7 +120,7 @@ function rate(id,t,pred,real){FB=FB.filter(f=>!(f.id===id&&f.t===t));FB.push({id
 
 /* ---------- état ---------- */
 /* RV : version des règles des spots. À chaque changement de règle, les anciens scores sont jetés et recalculés. */
-const RV=5;let D=load(CFG.key+"db-data"),C=load("co-data");if(D&&D.rv!==RV)D=null;if(C&&C.rv!==RV)C=null;let selJ=null,tabDay=null,mode="now",openReg=null;
+const RV=6;let D=load(CFG.key+"db-data"),C=load("co-data");if(D&&D.rv!==RV)D=null;if(C&&C.rv!==RV)C=null;let selJ=null,tabDay=null,mode="now",openReg=null;
 const busy={db:false,co:false},err={db:"",co:""};
 function staleMin(x){return x?(Date.now()-Date.parse(x.u))/60000:1e9}
 async function refreshDB(force){if(busy.db||(!force&&staleMin(D)<1))return;const zk=ZK;busy.db=true;err.db="";renderDBHead();try{const nd=await fetchDB();save(ZONES[zk].cfg.key+"db-data",nd);if(zk===ZK){D=nd;selJ=null;tabDay=null}}catch(e){err.db=(navigator.onLine===false?"Pas de connexion.":"Les prévisions ne répondent pas pour l'instant.")+(D?" Les dernières données restent affichées.":"")}busy.db=false;renderDB();if(zk!==ZK)refreshDB()}
@@ -131,7 +139,8 @@ function reasons(s,j){const c=cOf(s.id,j);if(!c)return [];const [h,p,sd,ws,wd,gu
   out.push([tr===2?"ok":tr===1?"mid":"ko",`${tideName(n,r)} : ${tr===2?"idéale":tr===1?"correcte":"défavorable"} ici (${s.tt.toLowerCase()})`]);
   out.push(h<s.sz[0]?["ko",`houle ${fmt(h)} m : trop petite, il lui faut ${fmt(s.sz[0])} m et plus au large`]:h>s.sz[1]?["ko",s.sat?`houle ${fmt(h)} m : ça sature au-delà de ${fmt(s.sz[1])} m`:`houle ${fmt(h)} m : au-dessus de ce qu'il tient bien (${fmt(s.sz[1])} m)`]:["ok",`houle ${fmt(h)} m de ${dl(sd)} : dans sa fourchette (${fmt(s.sz[0])}–${fmt(s.sz[1])} m)`]);
   out.push(p<s.p[0]?["ko",s.pmin?`période ${p} s : sous son minimum de ${s.p[0]} s`:`période ${p} s : un peu courte, idéal ${s.p[0]}–${s.p[1]} s`]:p>s.p[1]&&s.pmax?["ko",`période ${p} s : trop longue ici (au-delà de ${s.p[1]} s)`]:p>s.p[1]&&s.t==="beach"?["mid",`période ${p} s : longue pour un beach break, ça peut fermer`]:["ok",`période ${p} s : bonne (idéal ${s.p[0]}–${s.p[1]} s)`]);
-  out.push([wl<=1?"ok":wl===2?"mid":"ko",`vent ${ws} km/h de ${dl(wd)} : ${WLN[wl]} (offshore ici : ${s.o[2]})`]);return out}
+  out.push([wl<=1?"ok":wl===2?"mid":"ko",`vent ${ws} km/h de ${dl(wd)} : ${WLN[wl]} (offshore ici : ${s.o[2]})`]);
+  const k=c[13];if(s.cf&&k!=null)out.push(k>s.cf[1]?["ko",`coefficient ${k} (${coefName(k)}) : ça va trop vite, trop de courant`]:k<s.cf[0]?["mid",`coefficient ${k} (${coefName(k)}) : un peu faible, idéal entre ${s.cf[0]} et ${s.cf[1]}`]:["ok",`coefficient ${k} : idéal ici (entre ${s.cf[0]} et ${s.cf[1]})`]);return out}
 function tideSVG(day,j){if(!D.sl||!D.t0)return "<p>Marée indisponible</p>";const base=Math.round((ms(day+"T00:00")-ms(D.t0))/3600000),pts=[];
   for(let h=0;h<24;h++){const x=D.sl[base+h];if(x!=null)pts.push([h,x])}if(pts.length<6)return "<p>Marée indisponible</p>";
   const lo=Math.min(...pts.map(p=>p[1])),hi=Math.max(...pts.map(p=>p[1])),W=240,H=74,X=h=>8+h/23*(W-16),Y=y=>12+(hi-y)/((hi-lo)||1)*(H-30);
@@ -158,7 +167,7 @@ function renderDB(){
     rank.querySelectorAll("button").forEach(b=>b.onclick=()=>{const el=$("card-"+b.dataset.id);if(el)el.scrollIntoView({behavior:smooth(),block:"center"})});
     const c=cOf(top.s.id,j);conds.innerHTML=c?`<div class="tile"><span class="eyebrow">Houle au large</span><div class="val">${fmt(c[0])} <small>m</small> · ${c[1]} <small>s</small></div><p>de ${dl(c[2])} (${c[2]}°)</p></div>
       <div class="tile"><span class="eyebrow">Vent</span><div class="val">${c[3]} <small>km/h</small> · ${dl(c[4])}</div><p>rafales ${c[5]} km/h · offshore à ${top.s.n} : ${top.s.o[2]}</p></div>
-      <div class="tile"><span class="eyebrow">Marée · ${tideName(c[6],c[7])}</span>${tideSVG(D.t[j].slice(0,10),j)}</div>`:""}
+      <div class="tile"><span class="eyebrow">Marée · ${tideName(c[6],c[7])}${c[13]!=null?` · coef. ${c[13]}`:""}</span>${c[13]!=null?`<p>${coefName(c[13]).replace(/^./,x=>x.toUpperCase())}</p>`:""}${tideSVG(D.t[j].slice(0,10),j)}</div>`:""}
   const n=ms(nowLocal())-30*60000;
   $("days").innerHTML=daysOf(D).slice(0,4).map(d=>{let b=null;D.t.forEach((t,jj)=>{if(t.slice(0,10)!==d||ms(t)<n)return;DBS.forEach(s=>{const x=scD(s.id,jj);if(x!=null&&(!b||x>b.v))b={v:x,s,j:jj}})});
     if(!b)return `<div class="day" style="--sc:var(--line)"><span class="dn">${dayLabel(d)}</span><b>—</b><span>plus de créneau de jour</span></div>`;const l=lab(b.v);
@@ -174,6 +183,7 @@ function renderGrid(){const g=$("grid"),tb=$("dtabs");$("legend").innerHTML=SCL.
   DBS.forEach(s=>{h+=`<tr><th class="rowh" scope="row">${s.n}</th>${js.map(j=>{const x=scD(s.id,j);if(x==null)return `<td><button class="na" type="button" disabled>–</button></td>`;const l=lab(x);
     const [lo,hi]=rgD(s.id,j),cf=conf(lo,hi,D.t[j]);return `<td><button type="button" data-j="${j}" class="${j===sj?"sel":""} ${j===nj?"now":""} ${cf===0?"lc":""}" title="fiabilité ${CONF[cf]} : ${fmt(lo)}–${fmt(hi)}" style="--sc:var(${l[2]})" aria-label="${s.n} ${hh(D,j)} : ${fmt(x)} sur 10">${fmt(x)}</button></td>`}).join("")}</tr>`});
   h+=`<tr><th class="rowh" scope="row" style="font:500 10.5px var(--mono);color:var(--muted)">Marée</th>${js.map(j=>{const c=D.c[j];return `<th>${c?["B","M","H"][tideCat(c[6])]+(c[7]?"↗":"↘"):""}</th>`}).join("")}</tr>`;
+  h+=`<tr><th class="rowh" scope="row" style="font:500 10.5px var(--mono);color:var(--muted)">Coefficient</th>${js.map(j=>{const c=D.c[j];return `<th>${c&&c[13]!=null?c[13]:""}</th>`}).join("")}</tr>`;
   h+=`<tr><th class="rowh" scope="row" style="font:500 10.5px var(--mono);color:var(--muted)">Houle · vent</th>${js.map(j=>{const c=D.c[j];return `<th>${c?fmt(c[0])+" m<br>"+c[3]+"<br>"+dirName(c[4]):""}</th>`}).join("")}</tr>`;
   g.innerHTML=h;g.querySelectorAll("button[data-j]").forEach(b=>b.onclick=()=>{selJ=+b.dataset.j;renderDB();$("hero").scrollIntoView({behavior:smooth(),block:"start"})})}
 function renderCardsDB(){$("cards-db").innerHTML=DBS.map(s=>`<article class="card t-${s.t}" id="card-${s.id}"><span class="ty">${TN[s.t]}</span><div><h3>${s.n}</h3><p class="d">${s.d}${s.al?" · "+s.al:""}</p></div><p class="pf">${s.pf}</p>
@@ -185,7 +195,7 @@ function renderCOHead(){const f=$("fresh-co");f.textContent=busy.co&&!C?"Chargem
   const b=$("refresh-co");b.disabled=busy.co;b.innerHTML=busy.co?'<span class="spin"></span>Actualisation…':"Actualiser";const g=$("msg-co");g.hidden=!err.co;g.textContent=err.co}
 function stepsCO(){if(!C)return [];if(mode==="now")return [nowJ(C,90)];const today=nowLocal().slice(0,10),n=ms(nowLocal())-90*60000;return C.t.map((t,j)=>j).filter(j=>C.t[j].slice(0,10)===mode&&(mode!==today||ms(C.t[j])>=n))}
 function bestCO(id,st){const rows=C.s[id];if(!rows)return null;let b=null;st.forEach(j=>{const r=rows[j];if(r){const x=adj(id,r[8]);if(!b||x>b.sc)b={sc:x,j,r,cf:conf(r[10],r[11],C.t[j])}}});return b}
-const condHTML=r=>`<span><b>${fmt(r[0])} m</b> · ${r[1]} s · houle ${dl(r[2])}</span><span class="w${r[9]}">vent ${r[3]} km/h ${dl(r[4])} · ${WLN[r[9]]}</span><span>marée ${["basse","mi-marée","haute"][tideCat(r[6])]}${r[7]?" ↗":" ↘"}</span>`;
+const condHTML=r=>`<span><b>${fmt(r[0])} m</b> · ${r[1]} s · houle ${dl(r[2])}</span><span class="w${r[9]}">vent ${r[3]} km/h ${dl(r[4])} · ${WLN[r[9]]}</span><span>marée ${["basse","mi-marée","haute"][tideCat(r[6])]}${r[7]?" ↗":" ↘"}${r[12]!=null?" · coef. "+r[12]:""}</span>`;
 function renderCO(){renderCOHead();const tb=$("ctabs"),el=$("rcs");
   if(!C){tb.innerHTML="";el.innerHTML=`<p class="tip">${busy.co?"Calcul des 35 spots en cours…":"Les prévisions s'afficheront ici."}</p>`;return}
   const ds=daysOf(C);if(mode!=="now"&&!ds.includes(mode))mode="now";
