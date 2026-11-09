@@ -1,4 +1,4 @@
-const CACHE="surfcoast-v1";
+const CACHE="surfcoast-v2";
 const SHELL=["./","index.html","app.js","manifest.webmanifest","icons/icon-192.png","icons/icon-512.png","icons/apple-touch-icon.png"];
 self.addEventListener("install",e=>{e.waitUntil(caches.open(CACHE).then(c=>c.addAll(SHELL)).then(()=>self.skipWaiting()))});
 self.addEventListener("activate",e=>{e.waitUntil(caches.keys().then(k=>Promise.all(k.filter(x=>x!==CACHE).map(x=>caches.delete(x)))).then(()=>self.clients.claim()))});
@@ -10,5 +10,5 @@ self.addEventListener("fetch",e=>{
   // Polices Google : cache puis réseau
   if(u.hostname.includes("fonts.g")){e.respondWith(caches.open(CACHE).then(c=>c.match(e.request).then(r=>r||fetch(e.request).then(n=>{c.put(e.request,n.clone());return n}))));return}
   // Coquille de l'app : réseau d'abord, cache si hors-ligne
-  if(u.origin===location.origin){e.respondWith(fetch(e.request).then(n=>{const cp=n.clone();caches.open(CACHE).then(c=>c.put(e.request,cp));return n}).catch(()=>caches.match(e.request).then(r=>r||caches.match("index.html"))))}
+  if(u.origin===location.origin){e.respondWith(fetch(e.request.url,{cache:"no-cache",credentials:"same-origin"}).then(n=>{const cp=n.clone();caches.open(CACHE).then(c=>c.put(e.request,cp));return n}).catch(()=>caches.match(e.request).then(r=>r||caches.match("index.html"))))}
 });
