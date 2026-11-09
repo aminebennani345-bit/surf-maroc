@@ -1,0 +1,17 @@
+{
+  "name": "Surf Maroc · Quel spot",
+  "short_name": "Surf Maroc",
+  "description": "Quel spot cibler à Dar Bouazza et sur la côte atlantique marocaine, maintenant et sur 3 jours.",
+  "lang": "fr",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#0f2a3a",
+  "theme_color": "#0f2a3a",
+  "icons": [
+    { "src": "icons/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "icons/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
+    { "src": "icons/icon-maskable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ]
+}
