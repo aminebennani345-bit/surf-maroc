@@ -27,7 +27,7 @@ const inr=(d,a,b)=>((d-a)%360+360)%360<=((b-a)%360+360)%360;
 function score(s,h,p,sd,ws,wd,n,r){
   const [s0,s1]=s.sz,[p0,p1]=s.p,o0=s.o[0],o1=s.o[1],swc=Array.isArray(s.sw)?s.sw[0]:s.sw;
   const fs=h<s0?Math.pow(h/s0,1.6):h<=s1?1:s.sat?Math.max(0,1-(h-s1)/.25):Math.max(.05,1-(h-s1)/(s1*.7));
-  const fp=p<p0?Math.max(.15,1-(p0-p)/5):p<=p1?1:(s.t==="beach"?Math.max(.4,1-(p-p1)/6):.95);
+  const fp=p<p0?(s.pmin?Math.max(0,1-(p0-p)/1.5):Math.max(.15,1-(p0-p)/5)):p<=p1?1:(s.t==="beach"?Math.max(.4,1-(p-p1)/6):.95);
   const da=ang(sd,swc),fd=da<=25?1:da<=45?.8:da<=70?.5:.2;
   const om=(o0+(((o1-o0)%360+360)%360)/2)%360;let fw,wl;
   if(ws<=5){fw=1;wl=0}
@@ -120,7 +120,7 @@ function renderDBHead(){const f=$("fresh-db");f.textContent=busy.db&&!D?"Chargem
 function reasons(s,j){const c=D.c[j];if(!c)return [];const [h,p,sd,ws,wd,gu,n,r]=c,wl=D.s[s.id][j][1],out=[];const tr=s.tide[tideCat(n)];
   out.push([tr===2?"ok":tr===1?"mid":"ko",`${tideName(n,r)} : ${tr===2?"idéale":tr===1?"correcte":"défavorable"} ici (${s.tt.toLowerCase()})`]);
   out.push(h<s.sz[0]?["ko",`houle ${fmt(h)} m : trop petite, il lui faut ${fmt(s.sz[0])} m et plus au large`]:h>s.sz[1]?["ko",s.sat?`houle ${fmt(h)} m : ça sature au-delà de ${fmt(s.sz[1])} m`:`houle ${fmt(h)} m : au-dessus de ce qu'il tient bien (${fmt(s.sz[1])} m)`]:["ok",`houle ${fmt(h)} m de ${dl(sd)} : dans sa fourchette (${fmt(s.sz[0])}–${fmt(s.sz[1])} m)`]);
-  out.push(p<s.p[0]?["ko",`période ${p} s : un peu courte, idéal ${s.p[0]}–${s.p[1]} s`]:p>s.p[1]&&s.t==="beach"?["mid",`période ${p} s : longue pour un beach break, ça peut fermer`]:["ok",`période ${p} s : bonne (idéal ${s.p[0]}–${s.p[1]} s)`]);
+  out.push(p<s.p[0]?["ko",s.pmin?`période ${p} s : sous son minimum de ${s.p[0]} s`:`période ${p} s : un peu courte, idéal ${s.p[0]}–${s.p[1]} s`]:p>s.p[1]&&s.t==="beach"?["mid",`période ${p} s : longue pour un beach break, ça peut fermer`]:["ok",`période ${p} s : bonne (idéal ${s.p[0]}–${s.p[1]} s)`]);
   out.push([wl<=1?"ok":wl===2?"mid":"ko",`vent ${ws} km/h de ${dl(wd)} : ${WLN[wl]} (offshore ici : ${s.o[2]})`]);return out}
 function tideSVG(day,j){if(!D.sl||!D.t0)return "<p>Marée indisponible</p>";const base=Math.round((ms(day+"T00:00")-ms(D.t0))/3600000),pts=[];
   for(let h=0;h<24;h++){const x=D.sl[base+h];if(x!=null)pts.push([h,x])}if(pts.length<6)return "<p>Marée indisponible</p>";
