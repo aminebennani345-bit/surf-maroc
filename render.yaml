@@ -2,7 +2,7 @@ services:
   - type: web
     name: surf-maroc
     runtime: static
-    buildCommand: ""
+    buildCommand: echo "Site statique, rien à compiler"
     staticPublishPath: .
     headers:
       - path: /sw.js
