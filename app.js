@@ -1,4 +1,5 @@
 "use strict";
+let ZK=/imsouane/.test(location.hash)?"ims":"db",DBS=ZONES[ZK].spots,CFG=ZONES[ZK].cfg;
 /* ---------- utilitaires ---------- */
 const $=id=>document.getElementById(id);
 const fmt=n=>String(n).replace(".",",");
@@ -71,18 +72,23 @@ function scoreEns(s,S,W,n,r){const [base,wl]=score(s,S.h,S.p,S.sd,W.ws,W.wd,n,r)
 const r1=x=>Math.round(x*10)/10;
 const MV="https://marine-api.open-meteo.com/v1/marine",FV="https://api.open-meteo.com/v1/forecast";
 async function fetchDB(){
-  const W=`latitude=33.58&longitude=-7.87&timezone=${TZ}&forecast_days=4`,P=`latitude=33.533&longitude=-7.82&timezone=${TZ}&forecast_days=4`;
-  const [m,b,w]=await Promise.all([getJSON(`${MV}?${W}${MAR}`),getJSON(`${MV}?${W}&hourly=sea_level_height_msl`),getJSON(`${FV}?${P}${WIN}`)]);
-  const M=m.hourly,T=M.time,sl=b.hourly.sea_level_height_msl||[],WH=w.hourly;
+  const per=DBS.every(s=>s.lat!=null),tail=`&timezone=${TZ}&forecast_days=4`;
+  const WP=per?DBS.map(s=>offPt(s,CFG.offDist)):[CFG.wave],PP=per?DBS.map(s=>[s.lat,s.lon]):[CFG.wind];
+  const qs=pts=>`latitude=${pts.map(p=>p[0]).join(",")}&longitude=${pts.map(p=>p[1]).join(",")}`+tail;
+  const [Ms,Bs,Ws]=(await Promise.all([getJSON(`${MV}?${qs(WP)}${MAR}`),getJSON(`${MV}?${qs([WP[0]])}&hourly=sea_level_height_msl`),getJSON(`${FV}?${qs(PP)}${WIN}`)])).map(arr);
+  const T=Ms[0].hourly.time,sl=Bs[0].hourly.sea_level_height_msl||[];
   const idx=T.map((t,i)=>i).filter(i=>{const h=+T[i].slice(11,13);return h>=7&&h<=19});
-  const c=[],s={};DBS.forEach(x=>s[x.id]=[]);
-  idx.forEach(i=>{const S=swellEns(M,i),Wn=windEns(WH,i),[n,r]=tideAt(sl,i);
-    if(!S){c.push(null);DBS.forEach(x=>s[x.id].push(null));return}
-    c.push([r1(S.h),Math.round(S.p),Math.round(S.sd),Math.round(Wn.ws),Math.round(Wn.wd),Math.round(Wn.gu),n,r,r1(Math.min(...S.hs)),r1(Math.max(...S.hs)),Math.round(Math.min(...Wn.mem.map(x=>x[0]))),Math.round(Math.max(...Wn.mem.map(x=>x[0]))),Wn.mem.length]);
-    DBS.forEach(x=>s[x.id].push(scoreEns(x,S,Wn,n,r)))});
-  return {u:new Date().toISOString(),v:2,rv:RV,t:idx.map(i=>T[i]),c,s,t0:T[0],sl:sl.map(x=>x==null?null:Math.round(x*100)/100)};
+  const row=(S,Wn,n,r)=>[r1(S.h),Math.round(S.p),Math.round(S.sd),Math.round(Wn.ws),Math.round(Wn.wd),Math.round(Wn.gu),n,r,r1(Math.min(...S.hs)),r1(Math.max(...S.hs)),Math.round(Math.min(...Wn.mem.map(x=>x[0]))),Math.round(Math.max(...Wn.mem.map(x=>x[0]))),Wn.mem.length];
+  const c=[],s={},cs={};DBS.forEach(x=>{s[x.id]=[];cs[x.id]=[]});
+  idx.forEach(i=>{const [n,r]=tideAt(sl,i);let ref=null;
+    DBS.forEach((x,k)=>{const M=Ms[per?k:0].hourly,WH=Ws[per?k:0].hourly,S=swellEns(M,i),Wn=windEns(WH,i);
+      if(!S){s[x.id].push(null);cs[x.id].push(null);return}
+      const rw=row(S,Wn,n,r);cs[x.id].push(rw);if(!ref)ref=rw;s[x.id].push(scoreEns(x,S,Wn,n,r))});
+    c.push(ref)});
+  const out={u:new Date().toISOString(),v:2,rv:RV,t:idx.map(i=>T[i]),c,s,t0:T[0],sl:sl.map(x=>x==null?null:Math.round(x*100)/100)};
+  if(per)out.cs=cs;return out;
 }
-function offPt(s){const b=s.sw[0]*Math.PI/180;return [Math.round((s.lat+.3*Math.cos(b))*1000)/1000,Math.round((s.lon+.3*Math.sin(b)/Math.cos(s.lat*Math.PI/180))*1000)/1000]}
+function offPt(s,dist){const d=dist||.3,b=(Array.isArray(s.sw)?s.sw[0]:s.sw)*Math.PI/180;return [Math.round((s.lat+d*Math.cos(b))*1000)/1000,Math.round((s.lon+d*Math.sin(b)/Math.cos(s.lat*Math.PI/180))*1000)/1000]}
 async function fetchCoast(){
   const OP=COAST.map(offPt);const tail=`&timezone=${TZ}&forecast_days=4`;
   const qo=`latitude=${OP.map(p=>p[0]).join(",")}&longitude=${OP.map(p=>p[1]).join(",")}`+tail,q=`latitude=${COAST.map(s=>s.lat).join(",")}&longitude=${COAST.map(s=>s.lon).join(",")}`+tail;
@@ -104,10 +110,10 @@ function rate(id,t,pred,real){FB=FB.filter(f=>!(f.id===id&&f.t===t));FB.push({id
 
 /* ---------- état ---------- */
 /* RV : version des règles des spots. À chaque changement de règle, les anciens scores sont jetés et recalculés. */
-const RV=3;let D=load("db-data"),C=load("co-data");if(D&&D.rv!==RV)D=null;if(C&&C.rv!==RV)C=null;let selJ=null,tabDay=null,mode="now",openReg=null;
+const RV=4;let D=load(CFG.key+"db-data"),C=load("co-data");if(D&&D.rv!==RV)D=null;if(C&&C.rv!==RV)C=null;let selJ=null,tabDay=null,mode="now",openReg=null;
 const busy={db:false,co:false},err={db:"",co:""};
 function staleMin(x){return x?(Date.now()-Date.parse(x.u))/60000:1e9}
-async function refreshDB(force){if(busy.db||(!force&&staleMin(D)<1))return;busy.db=true;err.db="";renderDBHead();try{D=await fetchDB();save("db-data",D);selJ=null;tabDay=null}catch(e){err.db=(navigator.onLine===false?"Pas de connexion.":"Les prévisions ne répondent pas pour l'instant.")+(D?" Les dernières données restent affichées.":"")}busy.db=false;renderDB()}
+async function refreshDB(force){if(busy.db||(!force&&staleMin(D)<1))return;const zk=ZK;busy.db=true;err.db="";renderDBHead();try{const nd=await fetchDB();save(ZONES[zk].cfg.key+"db-data",nd);if(zk===ZK){D=nd;selJ=null;tabDay=null}}catch(e){err.db=(navigator.onLine===false?"Pas de connexion.":"Les prévisions ne répondent pas pour l'instant.")+(D?" Les dernières données restent affichées.":"")}busy.db=false;renderDB();if(zk!==ZK)refreshDB()}
 async function refreshCO(force){if(busy.co||(!force&&staleMin(C)<1))return;busy.co=true;err.co="";renderCOHead();try{C=await fetchCoast();save("co-data",C)}catch(e){err.co=(navigator.onLine===false?"Pas de connexion.":"Les prévisions ne répondent pas pour l'instant.")+(C?" Les dernières données restent affichées.":"")}busy.co=false;renderCO()}
 
 /* ---------- vue Dar Bouazza ---------- */
@@ -118,7 +124,8 @@ const scD=(id,j)=>{const a=D&&D.s[id];return a&&a[j]?adj(id,a[j][0]):null};
 const rgD=(id,j)=>{const a=D.s[id][j];const b=bias(id);return [Math.max(0,r1(a[2]+b)),Math.min(10,r1(a[3]+b))]};
 function renderDBHead(){const f=$("fresh-db");f.textContent=busy.db&&!D?"Chargement des prévisions…":D?"Prévisions "+ago(D.u):"Pas encore de prévisions";f.classList.toggle("old",staleMin(D)>240);
   const b=$("refresh-db");b.disabled=busy.db;b.innerHTML=busy.db?'<span class="spin"></span>Actualisation…':"Actualiser";const g=$("msg-db");g.hidden=!err.db;g.textContent=err.db}
-function reasons(s,j){const c=D.c[j];if(!c)return [];const [h,p,sd,ws,wd,gu,n,r]=c,wl=D.s[s.id][j][1],out=[];const tr=s.tide[tideCat(n)];
+const cOf=(id,j)=>D.cs&&D.cs[id]?D.cs[id][j]:D.c[j];
+function reasons(s,j){const c=cOf(s.id,j);if(!c)return [];const [h,p,sd,ws,wd,gu,n,r]=c,wl=D.s[s.id][j][1],out=[];const tr=s.tide[tideCat(n)];
   out.push([tr===2?"ok":tr===1?"mid":"ko",`${tideName(n,r)} : ${tr===2?"idéale":tr===1?"correcte":"défavorable"} ici (${s.tt.toLowerCase()})`]);
   out.push(h<s.sz[0]?["ko",`houle ${fmt(h)} m : trop petite, il lui faut ${fmt(s.sz[0])} m et plus au large`]:h>s.sz[1]?["ko",s.sat?`houle ${fmt(h)} m : ça sature au-delà de ${fmt(s.sz[1])} m`:`houle ${fmt(h)} m : au-dessus de ce qu'il tient bien (${fmt(s.sz[1])} m)`]:["ok",`houle ${fmt(h)} m de ${dl(sd)} : dans sa fourchette (${fmt(s.sz[0])}–${fmt(s.sz[1])} m)`]);
   out.push(p<s.p[0]?["ko",s.pmin?`période ${p} s : sous son minimum de ${s.p[0]} s`:`période ${p} s : un peu courte, idéal ${s.p[0]}–${s.p[1]} s`]:p>s.p[1]&&s.t==="beach"?["mid",`période ${p} s : longue pour un beach break, ça peut fermer`]:["ok",`période ${p} s : bonne (idéal ${s.p[0]}–${s.p[1]} s)`]);
@@ -139,7 +146,7 @@ function renderDB(){
   if(!R.length){hero.innerHTML=`<span class="eyebrow">Spot à cibler</span><h3>Pas de données</h3>`;rank.innerHTML="";conds.innerHTML=""}
   else{const top=R[0],L=lab(top.v);hero.style.setProperty("--sc",`var(${L[2]})`);
     hero.innerHTML=`<div class="row"><div style="min-width:0"><span class="eyebrow">Spot à cibler</span><h3 style="margin-top:6px">${top.s.n}</h3><div class="when">${dayLabel(D.t[j].slice(0,10))} à ${hh(D,j)} · ${TN[top.s.t]} · ${top.s.lv}</div></div><div style="text-align:right"><div class="big">${fmt(top.v)}<small>/10</small></div><span class="pill" style="--sc:var(${L[2]})">${L[1]}</span></div></div>
-    ${(()=>{const [lo,hi]=rgD(top.s.id,j),cf=conf(lo,hi,D.t[j]),c=D.c[j];const div=[];if(c&&c[11]-c[10]>=8)div.push(`vent ${c[10]} à ${c[11]} km/h selon les modèles`);if(c&&c[9]-c[8]>=.6)div.push(`houle ${fmt(c[8])} à ${fmt(c[9])} m`);const bb=bias(top.s.id);
+    ${(()=>{const [lo,hi]=rgD(top.s.id,j),cf=conf(lo,hi,D.t[j]),c=cOf(top.s.id,j);const div=[];if(c&&c[11]-c[10]>=8)div.push(`vent ${c[10]} à ${c[11]} km/h selon les modèles`);if(c&&c[9]-c[8]>=.6)div.push(`houle ${fmt(c[8])} à ${fmt(c[9])} m`);const bb=bias(top.s.id);
       return `<div class="conf c${cf}"><b>Fiabilité ${CONF[cf]}</b> · entre ${fmt(lo)} et ${fmt(hi)} selon les modèles${div.length?" ("+div.join(", ")+")":cf===2?", ils sont d'accord":""}${bb?` · ajusté de ${bb>0?"+":""}${fmt(r1(bb))} d'après tes retours`:""}</div>`})()}
     <ul class="why">${reasons(top.s,j).map(([k,t])=>`<li><i class="${k}">${k==="ok"?"✓":k==="ko"?"✕":"~"}</i><span>${t}</span></li>`).join("")}</ul>
     ${ms(D.t[j])<=ms(nowLocal())+3600000?`<div class="fb" id="fb"><span>Tu y étais ? C'était comment à ${top.s.n} ?</span><div>${[["Nul",1],["Moyen",4],["Bon",6],["Très bon",8],["Épique",10]].map(([l,x])=>`<button type="button" data-v="${x}">${l}</button>`).join("")}</div></div>`:""}
@@ -147,8 +154,8 @@ function renderDB(){
     const fbEl=$("fb");if(fbEl)fbEl.querySelectorAll("button").forEach(b=>b.onclick=()=>{const raw=D.s[top.s.id][j][0];rate(top.s.id,D.t[j],raw,+b.dataset.v);const bb=bias(top.s.id);fbEl.innerHTML=`<span>Merci. ${top.s.n} est maintenant ajusté de ${bb>0?"+":""}${fmt(r1(bb))} d'après tes ${FB.filter(f=>f.id===top.s.id).length} retour(s).</span>`;setTimeout(renderDB,2500)});
     rank.innerHTML=R.map((x,i)=>{const l=lab(x.v);return `<button type="button" data-id="${x.s.id}" aria-current="${i===0}" style="--sc:var(${l[2]})"><span class="n">${i+1}</span><span class="nm">${x.s.n}<small>${l[1]} · ${WLN[x.wl]}</small></span><span class="bar"><i style="width:${Math.max(3,x.v*10)}%"></i></span><span class="v">${fmt(x.v)}</span></button>`}).join("");
     rank.querySelectorAll("button").forEach(b=>b.onclick=()=>{const el=$("card-"+b.dataset.id);if(el)el.scrollIntoView({behavior:smooth(),block:"center"})});
-    const c=D.c[j];conds.innerHTML=c?`<div class="tile"><span class="eyebrow">Houle au large</span><div class="val">${fmt(c[0])} <small>m</small> · ${c[1]} <small>s</small></div><p>de ${dl(c[2])} (${c[2]}°)</p></div>
-      <div class="tile"><span class="eyebrow">Vent</span><div class="val">${c[3]} <small>km/h</small> · ${dl(c[4])}</div><p>rafales ${c[5]} km/h · offshore sur ce secteur : SE à S</p></div>
+    const c=cOf(top.s.id,j);conds.innerHTML=c?`<div class="tile"><span class="eyebrow">Houle au large</span><div class="val">${fmt(c[0])} <small>m</small> · ${c[1]} <small>s</small></div><p>de ${dl(c[2])} (${c[2]}°)</p></div>
+      <div class="tile"><span class="eyebrow">Vent</span><div class="val">${c[3]} <small>km/h</small> · ${dl(c[4])}</div><p>rafales ${c[5]} km/h · offshore à ${top.s.n} : ${top.s.o[2]}</p></div>
       <div class="tile"><span class="eyebrow">Marée · ${tideName(c[6],c[7])}</span>${tideSVG(D.t[j].slice(0,10),j)}</div>`:""}
   const n=ms(nowLocal())-30*60000;
   $("days").innerHTML=daysOf(D).slice(0,4).map(d=>{let b=null;D.t.forEach((t,jj)=>{if(t.slice(0,10)!==d||ms(t)<n)return;DBS.forEach(s=>{const x=scD(s.id,jj);if(x!=null&&(!b||x>b.v))b={v:x,s,j:jj}})});
@@ -192,8 +199,10 @@ function renderCO(){renderCOHead();const tb=$("ctabs"),el=$("rcs");
   el.innerHTML=html;el.querySelectorAll(".rc[data-r]").forEach(b=>b.onclick=()=>{openReg=openReg===b.dataset.r?null:b.dataset.r;renderCO()})}
 
 /* ---------- navigation, installation, service worker ---------- */
-function show(v){$("view-db").hidden=v!=="db";$("view-coast").hidden=v!=="coast";document.querySelectorAll(".nav button").forEach(b=>b.setAttribute("aria-current",b.dataset.v===v?"page":"false"));
-  if(location.hash!==(v==="coast"?"#cote":""))history.replaceState(null,"",v==="coast"?"#cote":location.pathname);window.scrollTo(0,0);
+function setZone(k){if(k===ZK&&D)return;ZK=k;DBS=ZONES[k].spots;CFG=ZONES[k].cfg;D=load(CFG.key+"db-data");if(D&&D.rv!==RV)D=null;selJ=null;tabDay=null;err.db="";
+  $("zname").textContent=ZONES[k].name;$("zsub").textContent=ZONES[k].sub;$("zcount").textContent=`Les ${DBS.length} spots`;renderCardsDB();renderDB()}
+function show(v){const local=v in ZONES;if(local)setZone(v);$("view-db").hidden=!local;$("view-coast").hidden=v!=="coast";document.querySelectorAll(".nav button").forEach(b=>b.setAttribute("aria-current",b.dataset.v===v?"page":"false"));
+  const hsh=v==="coast"?"#cote":v==="ims"?"#imsouane":"";if(location.hash!==hsh)history.replaceState(null,"",hsh||location.pathname);window.scrollTo(0,0);if(local)refreshDB();
   if(v==="coast")refreshCO()}
 document.querySelectorAll(".nav button").forEach(b=>b.onclick=()=>show(b.dataset.v));
 $("refresh-db").onclick=()=>refreshDB(true);$("refresh-co").onclick=()=>refreshCO(true);$("back").onclick=()=>{selJ=null;tabDay=null;renderDB()};
@@ -211,5 +220,5 @@ addEventListener("focus",liveRefresh);addEventListener("online",liveRefresh);
 setInterval(()=>{if(document.visibilityState==="visible")liveRefresh()},10*60000);
 setInterval(()=>{renderDBHead();renderCOHead();if(D&&selJ==null&&document.visibilityState==="visible")renderDB();if(C&&mode==="now"&&!$("view-coast").hidden)renderCO()},60000);
 if("serviceWorker" in navigator&&location.protocol!=="file:")navigator.serviceWorker.register("sw.js").catch(()=>{});
-renderCardsDB();renderDB();renderCO();installHint();show(location.hash==="#cote"?"coast":"db");
+renderCardsDB();renderDB();renderCO();installHint();show(location.hash==="#cote"?"coast":location.hash==="#imsouane"?"ims":"db");
 refreshDB(true);
