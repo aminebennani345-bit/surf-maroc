@@ -22,20 +22,22 @@ function ago(u){const m=Math.round((Date.now()-Date.parse(u))/60000);return m<2?
 const load=k=>{try{return JSON.parse(localStorage.getItem(k)||"null")}catch(e){return null}};
 const save=(k,v)=>{try{localStorage.setItem(k,JSON.stringify(v))}catch(e){}};
 
-/* ---------- score (mêmes règles que le calcul serveur) ---------- */
+/* ---------- score ---------- */
+/* note de marée : règle fine du spot (tw = [n min, n max, sens -1 tous / 1 montante / 0 descendante, note]) sinon basse/mi/haute */
+function tideRate(s,n,r){if(s.tw){for(const [a,b,d,v] of s.tw)if(n>=a&&n<b&&(d<0||d===r))return v;return 1}return s.tide[tideCat(n)]}
 const ang=(a,b)=>{const d=Math.abs(a-b)%360;return Math.min(d,360-d)};
 const inr=(d,a,b)=>((d-a)%360+360)%360<=((b-a)%360+360)%360;
 function score(s,h,p,sd,ws,wd,n,r){
   const [s0,s1]=s.sz,[p0,p1]=s.p,o0=s.o[0],o1=s.o[1],swc=Array.isArray(s.sw)?s.sw[0]:s.sw;
-  const fs=h<s0?(s.smin?Math.max(0,1-(s0-h)/.4):Math.pow(h/s0,1.6)):h<=s1?1:s.sat?Math.max(0,1-(h-s1)/.25):Math.max(.05,1-(h-s1)/(s1*.7));
-  const fp=p<p0?(s.pmin?Math.max(0,1-(p0-p)/1.5):Math.max(.15,1-(p0-p)/5)):p<=p1?1:(s.t==="beach"?Math.max(.4,1-(p-p1)/6):.95);
+  const fs=h<s0?(s.smin?Math.max(0,1-(s0-h)/.4):Math.pow(h/s0,1.6)):h<=s1?1:s.sat?Math.max(0,1-(h-s1)/(s.satw||.25)):Math.max(.05,1-(h-s1)/(s1*.7));
+  const fp=p<p0?(s.pmin?Math.max(0,1-(p0-p)/1.5):Math.max(.15,1-(p0-p)/5)):p<=p1?1:s.pmax?Math.max(0,1-(p-p1)/1.5):(s.t==="beach"?Math.max(.4,1-(p-p1)/6):.95);
   const da=ang(sd,swc),fd=da<=25?1:da<=45?.8:da<=70?.5:.2;
   const om=(o0+(((o1-o0)%360+360)%360)/2)%360;let fw,wl;
   if(ws<=5){fw=1;wl=0}
   else if(inr(wd,(o0-15+360)%360,(o1+15)%360)){fw=ws<=25?1:ws<=35?.8:.55;wl=1}
   else if(ang(wd,(om+180)%360)<=60){fw=Math.max(.1,.6-(ws-5)/20);wl=3}
   else{fw=Math.max(.2,.85-(ws-5)/25);wl=2}
-  let ft={2:1,1:.75,0:.4}[s.tide[tideCat(n)]];if(s.rise&&r)ft=Math.min(1,ft+.1);
+  let ft={2:1,1:.75,0:.4}[tideRate(s,n,r)];if(s.rise&&r)ft=Math.min(1,ft+.1);
   return [Math.round(100*fs*fp*fd*fw*ft)/10,wl];
 }
 
@@ -110,7 +112,7 @@ function rate(id,t,pred,real){FB=FB.filter(f=>!(f.id===id&&f.t===t));FB.push({id
 
 /* ---------- état ---------- */
 /* RV : version des règles des spots. À chaque changement de règle, les anciens scores sont jetés et recalculés. */
-const RV=4;let D=load(CFG.key+"db-data"),C=load("co-data");if(D&&D.rv!==RV)D=null;if(C&&C.rv!==RV)C=null;let selJ=null,tabDay=null,mode="now",openReg=null;
+const RV=5;let D=load(CFG.key+"db-data"),C=load("co-data");if(D&&D.rv!==RV)D=null;if(C&&C.rv!==RV)C=null;let selJ=null,tabDay=null,mode="now",openReg=null;
 const busy={db:false,co:false},err={db:"",co:""};
 function staleMin(x){return x?(Date.now()-Date.parse(x.u))/60000:1e9}
 async function refreshDB(force){if(busy.db||(!force&&staleMin(D)<1))return;const zk=ZK;busy.db=true;err.db="";renderDBHead();try{const nd=await fetchDB();save(ZONES[zk].cfg.key+"db-data",nd);if(zk===ZK){D=nd;selJ=null;tabDay=null}}catch(e){err.db=(navigator.onLine===false?"Pas de connexion.":"Les prévisions ne répondent pas pour l'instant.")+(D?" Les dernières données restent affichées.":"")}busy.db=false;renderDB();if(zk!==ZK)refreshDB()}
@@ -125,10 +127,10 @@ const rgD=(id,j)=>{const a=D.s[id][j];const b=bias(id);return [Math.max(0,r1(a[2
 function renderDBHead(){const f=$("fresh-db");f.textContent=busy.db&&!D?"Chargement des prévisions…":D?"Prévisions "+ago(D.u):"Pas encore de prévisions";f.classList.toggle("old",staleMin(D)>240);
   const b=$("refresh-db");b.disabled=busy.db;b.innerHTML=busy.db?'<span class="spin"></span>Actualisation…':"Actualiser";const g=$("msg-db");g.hidden=!err.db;g.textContent=err.db}
 const cOf=(id,j)=>D.cs&&D.cs[id]?D.cs[id][j]:D.c[j];
-function reasons(s,j){const c=cOf(s.id,j);if(!c)return [];const [h,p,sd,ws,wd,gu,n,r]=c,wl=D.s[s.id][j][1],out=[];const tr=s.tide[tideCat(n)];
+function reasons(s,j){const c=cOf(s.id,j);if(!c)return [];const [h,p,sd,ws,wd,gu,n,r]=c,wl=D.s[s.id][j][1],out=[];const tr=tideRate(s,n,r);
   out.push([tr===2?"ok":tr===1?"mid":"ko",`${tideName(n,r)} : ${tr===2?"idéale":tr===1?"correcte":"défavorable"} ici (${s.tt.toLowerCase()})`]);
   out.push(h<s.sz[0]?["ko",`houle ${fmt(h)} m : trop petite, il lui faut ${fmt(s.sz[0])} m et plus au large`]:h>s.sz[1]?["ko",s.sat?`houle ${fmt(h)} m : ça sature au-delà de ${fmt(s.sz[1])} m`:`houle ${fmt(h)} m : au-dessus de ce qu'il tient bien (${fmt(s.sz[1])} m)`]:["ok",`houle ${fmt(h)} m de ${dl(sd)} : dans sa fourchette (${fmt(s.sz[0])}–${fmt(s.sz[1])} m)`]);
-  out.push(p<s.p[0]?["ko",s.pmin?`période ${p} s : sous son minimum de ${s.p[0]} s`:`période ${p} s : un peu courte, idéal ${s.p[0]}–${s.p[1]} s`]:p>s.p[1]&&s.t==="beach"?["mid",`période ${p} s : longue pour un beach break, ça peut fermer`]:["ok",`période ${p} s : bonne (idéal ${s.p[0]}–${s.p[1]} s)`]);
+  out.push(p<s.p[0]?["ko",s.pmin?`période ${p} s : sous son minimum de ${s.p[0]} s`:`période ${p} s : un peu courte, idéal ${s.p[0]}–${s.p[1]} s`]:p>s.p[1]&&s.pmax?["ko",`période ${p} s : trop longue ici (au-delà de ${s.p[1]} s)`]:p>s.p[1]&&s.t==="beach"?["mid",`période ${p} s : longue pour un beach break, ça peut fermer`]:["ok",`période ${p} s : bonne (idéal ${s.p[0]}–${s.p[1]} s)`]);
   out.push([wl<=1?"ok":wl===2?"mid":"ko",`vent ${ws} km/h de ${dl(wd)} : ${WLN[wl]} (offshore ici : ${s.o[2]})`]);return out}
 function tideSVG(day,j){if(!D.sl||!D.t0)return "<p>Marée indisponible</p>";const base=Math.round((ms(day+"T00:00")-ms(D.t0))/3600000),pts=[];
   for(let h=0;h<24;h++){const x=D.sl[base+h];if(x!=null)pts.push([h,x])}if(pts.length<6)return "<p>Marée indisponible</p>";
