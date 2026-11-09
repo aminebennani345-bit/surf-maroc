@@ -107,8 +107,8 @@ function rate(id,t,pred,real){FB=FB.filter(f=>!(f.id===id&&f.t===t));FB.push({id
 const RV=3;let D=load("db-data"),C=load("co-data");if(D&&D.rv!==RV)D=null;if(C&&C.rv!==RV)C=null;let selJ=null,tabDay=null,mode="now",openReg=null;
 const busy={db:false,co:false},err={db:"",co:""};
 function staleMin(x){return x?(Date.now()-Date.parse(x.u))/60000:1e9}
-async function refreshDB(){if(busy.db)return;busy.db=true;err.db="";renderDBHead();try{D=await fetchDB();save("db-data",D);selJ=null;tabDay=null}catch(e){err.db=(navigator.onLine===false?"Pas de connexion.":"Les prévisions ne répondent pas pour l'instant.")+(D?" Les dernières données restent affichées.":"")}busy.db=false;renderDB()}
-async function refreshCO(){if(busy.co)return;busy.co=true;err.co="";renderCOHead();try{C=await fetchCoast();save("co-data",C)}catch(e){err.co=(navigator.onLine===false?"Pas de connexion.":"Les prévisions ne répondent pas pour l'instant.")+(C?" Les dernières données restent affichées.":"")}busy.co=false;renderCO()}
+async function refreshDB(force){if(busy.db||(!force&&staleMin(D)<1))return;busy.db=true;err.db="";renderDBHead();try{D=await fetchDB();save("db-data",D);selJ=null;tabDay=null}catch(e){err.db=(navigator.onLine===false?"Pas de connexion.":"Les prévisions ne répondent pas pour l'instant.")+(D?" Les dernières données restent affichées.":"")}busy.db=false;renderDB()}
+async function refreshCO(force){if(busy.co||(!force&&staleMin(C)<1))return;busy.co=true;err.co="";renderCOHead();try{C=await fetchCoast();save("co-data",C)}catch(e){err.co=(navigator.onLine===false?"Pas de connexion.":"Les prévisions ne répondent pas pour l'instant.")+(C?" Les dernières données restent affichées.":"")}busy.co=false;renderCO()}
 
 /* ---------- vue Dar Bouazza ---------- */
 function nowJ(F,back){if(!F)return -1;const n=ms(nowLocal())-(back||30)*60000;const j=F.t.findIndex(t=>ms(t)>=n);return j<0?F.t.length-1:j}
@@ -194,17 +194,22 @@ function renderCO(){renderCOHead();const tb=$("ctabs"),el=$("rcs");
 /* ---------- navigation, installation, service worker ---------- */
 function show(v){$("view-db").hidden=v!=="db";$("view-coast").hidden=v!=="coast";document.querySelectorAll(".nav button").forEach(b=>b.setAttribute("aria-current",b.dataset.v===v?"page":"false"));
   if(location.hash!==(v==="coast"?"#cote":""))history.replaceState(null,"",v==="coast"?"#cote":location.pathname);window.scrollTo(0,0);
-  if(v==="coast"&&(!C||staleMin(C)>30))refreshCO()}
+  if(v==="coast")refreshCO()}
 document.querySelectorAll(".nav button").forEach(b=>b.onclick=()=>show(b.dataset.v));
-$("refresh-db").onclick=refreshDB;$("refresh-co").onclick=refreshCO;$("back").onclick=()=>{selJ=null;tabDay=null;renderDB()};
+$("refresh-db").onclick=()=>refreshDB(true);$("refresh-co").onclick=()=>refreshCO(true);$("back").onclick=()=>{selJ=null;tabDay=null;renderDB()};
 let deferred=null;const standalone=matchMedia("(display-mode: standalone)").matches||navigator.standalone;
 function installHint(){const el=$("install");if(standalone){el.hidden=true;return}
   const ios=/iphone|ipad|ipod/i.test(navigator.userAgent);
   if(deferred){el.hidden=false;el.innerHTML=`<span><b>Installe l'app</b> sur ton écran d'accueil.</span><button class="btn" id="inst" type="button">Installer</button>`;$("inst").onclick=async()=>{deferred.prompt();await deferred.userChoice;deferred=null;el.hidden=true}}
   else if(ios){el.hidden=false;el.innerHTML=`<span><b>Pour l'installer :</b> touche Partager dans Safari, puis « Sur l'écran d'accueil ».</span>`}}
 addEventListener("beforeinstallprompt",e=>{e.preventDefault();deferred=e;installHint()});
-document.addEventListener("visibilitychange",()=>{if(document.visibilityState==="visible"){if(staleMin(D)>30)refreshDB();if(!$("view-coast").hidden&&staleMin(C)>30)refreshCO();renderDBHead();renderCOHead()}});
-setInterval(()=>{renderDBHead();renderCOHead()},60000);
+/* actualisation à l'instant t : à l'ouverture, à chaque retour dans l'app, et toutes les 10 minutes tant qu'elle est ouverte */
+function liveRefresh(){refreshDB();if(!$("view-coast").hidden)refreshCO()}
+document.addEventListener("visibilitychange",()=>{if(document.visibilityState==="visible")liveRefresh()});
+addEventListener("pageshow",e=>{if(e.persisted)liveRefresh()});
+addEventListener("focus",liveRefresh);addEventListener("online",liveRefresh);
+setInterval(()=>{if(document.visibilityState==="visible")liveRefresh()},10*60000);
+setInterval(()=>{renderDBHead();renderCOHead();if(D&&selJ==null&&document.visibilityState==="visible")renderDB();if(C&&mode==="now"&&!$("view-coast").hidden)renderCO()},60000);
 if("serviceWorker" in navigator&&location.protocol!=="file:")navigator.serviceWorker.register("sw.js").catch(()=>{});
 renderCardsDB();renderDB();renderCO();installHint();show(location.hash==="#cote"?"coast":"db");
-if(staleMin(D)>30)refreshDB();
+refreshDB(true);
