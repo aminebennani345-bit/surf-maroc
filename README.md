@@ -1,4 +1,4 @@
-# Surf Maroc · Quel spot
+# Surf Dar Bouazza
 
 Web app installable (PWA) : quel spot cibler à Dar Bouazza et sur la côte atlantique marocaine, maintenant et sur 3 jours.
 
