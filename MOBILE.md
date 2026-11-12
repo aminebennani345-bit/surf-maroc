@@ -61,9 +61,16 @@ Garde une copie du fichier et des mots de passe en lieu sûr. Avec la signature 
    « Données non collectées ».
 
 **Point de vigilance Apple** : la règle 4.2 (« fonctionnalités minimales ») refuse les applis qui ne
-font que reprendre un site web. SurfCoast a de vrais atouts (calcul des scores sur l'appareil,
-fonctionnement hors-ligne, notes de session), mais ajouter une fonction native, par exemple une
-**notification quand une session ≥ 8/10 s'annonce**, augmente nettement les chances de validation.
+font que reprendre un site web. L'appli a donc une vraie fonction native : **une notification quand
+une session ≥ 8/10 s'annonce** (la veille à 20h, ou 2h avant si c'est le jour même), pour Dar Bouazza
+et Imsouane. Pense à la citer dans les notes pour l'équipe de validation d'Apple.
+
+## Notifications
+
+Elles se replanifient à chaque ouverture de l'appli et à chaque actualisation, à partir des dernières
+prévisions. Une zone n'est suivie que si ses prévisions ont déjà été chargées une fois dans l'appli.
+L'utilisateur accepte ou refuse les notifications au premier lancement, et peut les couper dans les
+réglages du téléphone.
 
 ## Données Open-Meteo
 
