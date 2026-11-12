@@ -218,7 +218,7 @@ function show(v){const local=v in ZONES;if(local)setZone(v);$("view-db").hidden=
   if(v==="coast")refreshCO()}
 document.querySelectorAll(".nav button").forEach(b=>b.onclick=()=>show(b.dataset.v));
 $("refresh-db").onclick=()=>refreshDB(true);$("refresh-co").onclick=()=>refreshCO(true);$("back").onclick=()=>{selJ=null;tabDay=null;renderDB()};
-let deferred=null;const standalone=matchMedia("(display-mode: standalone)").matches||navigator.standalone;
+let deferred=null;const isNative=!!(window.Capacitor&&window.Capacitor.isNativePlatform&&window.Capacitor.isNativePlatform());const standalone=isNative||matchMedia("(display-mode: standalone)").matches||navigator.standalone;
 function installHint(){const el=$("install");if(standalone){el.hidden=true;return}
   const ios=/iphone|ipad|ipod/i.test(navigator.userAgent);
   if(deferred){el.hidden=false;el.innerHTML=`<span><b>Installe l'app</b> sur ton écran d'accueil.</span><button class="btn" id="inst" type="button">Installer</button>`;$("inst").onclick=async()=>{deferred.prompt();await deferred.userChoice;deferred=null;el.hidden=true}}
@@ -231,6 +231,6 @@ addEventListener("pageshow",e=>{if(e.persisted)liveRefresh()});
 addEventListener("focus",liveRefresh);addEventListener("online",liveRefresh);
 setInterval(()=>{if(document.visibilityState==="visible")liveRefresh()},10*60000);
 setInterval(()=>{renderDBHead();renderCOHead();if(D&&selJ==null&&document.visibilityState==="visible")renderDB();if(C&&mode==="now"&&!$("view-coast").hidden)renderCO()},60000);
-if("serviceWorker" in navigator&&location.protocol!=="file:")navigator.serviceWorker.register("sw.js").catch(()=>{});
+if(!isNative&&"serviceWorker" in navigator&&location.protocol!=="file:")navigator.serviceWorker.register("sw.js").catch(()=>{});
 renderCardsDB();renderDB();renderCO();installHint();show(location.hash==="#cote"?"coast":location.hash==="#imsouane"?"ims":"db");
 refreshDB(true);

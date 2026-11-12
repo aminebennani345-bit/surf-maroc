@@ -14,3 +14,6 @@ Le fichier `render.yaml` décrit un site statique. Pousse ce dossier sur GitHub,
 Ouvre l'adresse du site dans Safari, touche Partager, puis « Sur l'écran d'accueil ».
 
 Données : Open-Meteo, gratuit pour un usage personnel non commercial.
+
+## Appli Android et iPhone
+Voir [MOBILE.md](MOBILE.md) : build automatique et étapes de publication sur le Play Store et l'App Store.

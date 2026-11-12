@@ -1,0 +1,96 @@
+name: Appli mobile
+
+# Construit l'appli Android (APK de test + AAB signé pour le Play Store)
+# et vérifie que l'appli iOS compile. Lancement : à chaque push sur main,
+# sur les pull requests, ou à la main (onglet Actions → « Appli mobile » → Run workflow).
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: mobile-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  android:
+    name: Android
+    runs-on: ubuntu-latest
+    env:
+      BUILD_NUMBER: ${{ github.run_number }}
+      HAS_KEY: ${{ secrets.ANDROID_KEYSTORE_BASE64 != '' }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 21
+      - run: npm ci
+      - name: Préparer l'appli
+        run: |
+          npm run build:web
+          npx cap add android
+          npm run assets:android
+          npm run version:native
+          npx cap sync android
+      - name: APK de test (à installer directement sur un téléphone)
+        working-directory: android
+        run: ./gradlew assembleDebug --no-daemon
+      - uses: actions/upload-artifact@v4
+        with:
+          name: surfcoast-android-test-apk
+          path: android/app/build/outputs/apk/debug/*.apk
+      - name: AAB signé pour le Play Store
+        if: env.HAS_KEY == 'true'
+        env:
+          KS_B64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          KS_PASS: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          KS_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          KEY_PASS: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: |
+          echo "$KS_B64" | base64 --decode > "$RUNNER_TEMP/upload.jks"
+          npx cap build android --androidreleasetype AAB --signing-type jarsigner \
+            --keystorepath "$RUNNER_TEMP/upload.jks" --keystorepass "$KS_PASS" \
+            --keystorealias "$KS_ALIAS" --keystorealiaspass "$KEY_PASS"
+          rm -f "$RUNNER_TEMP/upload.jks"
+          ls -la android/app/build/outputs/bundle/release/
+      - uses: actions/upload-artifact@v4
+        if: env.HAS_KEY == 'true'
+        with:
+          name: surfcoast-android-playstore-aab
+          path: android/app/build/outputs/bundle/release/app-release-signed.aab
+
+  ios:
+    name: iOS (vérification de compilation)
+    runs-on: macos-15
+    env:
+      BUILD_NUMBER: ${{ github.run_number }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - name: Choisir le Xcode le plus récent
+        run: |
+          X=$(ls -d /Applications/Xcode_*.app | sort -V | tail -1)
+          sudo xcode-select -s "$X"
+          xcodebuild -version
+      - run: npm ci
+      - name: Préparer l'appli
+        run: |
+          npm run build:web
+          npx cap add ios
+          npm run assets:ios
+          npm run version:native
+          npx cap sync ios
+      - name: Compiler pour le simulateur (sans signature)
+        run: |
+          xcodebuild -project ios/App/App.xcodeproj -scheme App -configuration Release \
+            -sdk iphonesimulator -destination 'generic/platform=iOS Simulator' \
+            -derivedDataPath build CODE_SIGNING_ALLOWED=NO build | tail -20

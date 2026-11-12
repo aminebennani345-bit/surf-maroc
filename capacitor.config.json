@@ -1,0 +1,8 @@
+{
+  "appId": "io.github.aminebennani345.surfcoast",
+  "appName": "SurfCoast",
+  "webDir": "www",
+  "backgroundColor": "#0f2a3a",
+  "android": { "backgroundColor": "#0f2a3a" },
+  "ios": { "backgroundColor": "#0f2a3a", "contentInset": "never" }
+}
