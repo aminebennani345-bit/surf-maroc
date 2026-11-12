@@ -1,0 +1,23 @@
+{
+  "name": "surfcoast",
+  "version": "1.0.0",
+  "private": true,
+  "description": "SurfCoast — appli mobile (Capacitor) de la web app de prévisions de surf.",
+  "scripts": {
+    "build:web": "node scripts/build-web.mjs",
+    "add:android": "cap add android",
+    "add:ios": "cap add ios",
+    "version:native": "node scripts/set-version.mjs",
+    "sync": "cap sync",
+    "assets:android": "node scripts/make-assets.mjs && capacitor-assets generate --android --iconBackgroundColor \"#0f2a3a\" --iconBackgroundColorDark \"#0f2a3a\" --splashBackgroundColor \"#0f2a3a\" --splashBackgroundColorDark \"#0f2a3a\"",
+    "assets:ios": "node scripts/make-assets.mjs && capacitor-assets generate --ios --iconBackgroundColor \"#0f2a3a\" --iconBackgroundColorDark \"#0f2a3a\" --splashBackgroundColor \"#0f2a3a\" --splashBackgroundColorDark \"#0f2a3a\""
+  },
+  "devDependencies": {
+    "@capacitor/android": "8.6.2",
+    "@capacitor/assets": "4.0.0",
+    "@capacitor/cli": "8.6.2",
+    "@capacitor/core": "8.6.2",
+    "@capacitor/ios": "8.6.2",
+    "@capacitor/local-notifications": "8.3.1"
+  }
+}

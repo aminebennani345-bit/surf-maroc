@@ -123,7 +123,7 @@ function rate(id,t,pred,real){FB=FB.filter(f=>!(f.id===id&&f.t===t));FB.push({id
 const RV=6;let D=load(CFG.key+"db-data"),C=load("co-data");if(D&&D.rv!==RV)D=null;if(C&&C.rv!==RV)C=null;let selJ=null,tabDay=null,mode="now",openReg=null;
 const busy={db:false,co:false},err={db:"",co:""};
 function staleMin(x){return x?(Date.now()-Date.parse(x.u))/60000:1e9}
-async function refreshDB(force){if(busy.db||(!force&&staleMin(D)<1))return;const zk=ZK;busy.db=true;err.db="";renderDBHead();try{const nd=await fetchDB();save(ZONES[zk].cfg.key+"db-data",nd);if(zk===ZK){D=nd;selJ=null;tabDay=null}}catch(e){err.db=(navigator.onLine===false?"Pas de connexion.":"Les prévisions ne répondent pas pour l'instant.")+(D?" Les dernières données restent affichées.":"")}busy.db=false;renderDB();if(zk!==ZK)refreshDB()}
+async function refreshDB(force){if(busy.db||(!force&&staleMin(D)<1))return;const zk=ZK;busy.db=true;err.db="";renderDBHead();try{const nd=await fetchDB();save(ZONES[zk].cfg.key+"db-data",nd);planNotifs();if(zk===ZK){D=nd;selJ=null;tabDay=null}}catch(e){err.db=(navigator.onLine===false?"Pas de connexion.":"Les prévisions ne répondent pas pour l'instant.")+(D?" Les dernières données restent affichées.":"")}busy.db=false;renderDB();if(zk!==ZK)refreshDB()}
 async function refreshCO(force){if(busy.co||(!force&&staleMin(C)<1))return;busy.co=true;err.co="";renderCOHead();try{C=await fetchCoast();save("co-data",C)}catch(e){err.co=(navigator.onLine===false?"Pas de connexion.":"Les prévisions ne répondent pas pour l'instant.")+(C?" Les dernières données restent affichées.":"")}busy.co=false;renderCO()}
 
 /* ---------- vue Dar Bouazza ---------- */
@@ -218,12 +218,25 @@ function show(v){const local=v in ZONES;if(local)setZone(v);$("view-db").hidden=
   if(v==="coast")refreshCO()}
 document.querySelectorAll(".nav button").forEach(b=>b.onclick=()=>show(b.dataset.v));
 $("refresh-db").onclick=()=>refreshDB(true);$("refresh-co").onclick=()=>refreshCO(true);$("back").onclick=()=>{selJ=null;tabDay=null;renderDB()};
-let deferred=null;const standalone=matchMedia("(display-mode: standalone)").matches||navigator.standalone;
+let deferred=null;const isNative=!!(window.Capacitor&&window.Capacitor.isNativePlatform&&window.Capacitor.isNativePlatform());const standalone=isNative||matchMedia("(display-mode: standalone)").matches||navigator.standalone;
 function installHint(){const el=$("install");if(standalone){el.hidden=true;return}
   const ios=/iphone|ipad|ipod/i.test(navigator.userAgent);
   if(deferred){el.hidden=false;el.innerHTML=`<span><b>Installe l'app</b> sur ton écran d'accueil.</span><button class="btn" id="inst" type="button">Installer</button>`;$("inst").onclick=async()=>{deferred.prompt();await deferred.userChoice;deferred=null;el.hidden=true}}
   else if(ios){el.hidden=false;el.innerHTML=`<span><b>Pour l'installer :</b> touche Partager dans Safari, puis « Sur l'écran d'accueil ».</span>`}}
 addEventListener("beforeinstallprompt",e=>{e.preventDefault();deferred=e;installHint()});
+/* notifications (appli native) : une alerte par zone et par jour où un spot dépasse 8/10.
+   La veille à 20h si possible, sinon 2h avant le créneau. Replanifiées à chaque actualisation. */
+const NOTIF_MIN=8;
+function notifPlan(now){const off=Math.round((ms(nowLocal())-now)/6e4)*6e4,out=[];
+  Object.keys(ZONES).forEach((k,zi)=>{const Z=ZONES[k],F=load(Z.cfg.key+"db-data");if(!F||F.rv!==RV||!F.t)return;const best={};
+    F.t.forEach((t,j)=>{const at=ms(t)-off;if(at<now)return;Z.spots.forEach(s=>{const a=F.s[s.id]&&F.s[s.id][j];if(!a)return;const v=adj(s.id,a[0]),d=t.slice(0,10);if(v>=NOTIF_MIN&&(!best[d]||v>best[d].v))best[d]={v,s,t,at}})});
+    Object.keys(best).forEach(d=>{const b=best[d],eve=ms(d+"T20:00")-864e5-off;let when=eve,lbl="Demain";if(eve<now+6e5){when=b.at-2*36e5;lbl="Aujourd'hui"}if(when<now+6e5)return;
+      out.push({id:+d.replace(/-/g,"").slice(2)*10+zi,title:`Session à ne pas rater : ${b.s.n} ${fmt(b.v)}/10`,body:`${lbl} à ${parseInt(b.t.slice(11,13),10)}h · ${Z.name}`,schedule:{at:new Date(when),allowWhileIdle:true}})})});
+  return out}
+async function planNotifs(){const LN=isNative&&window.Capacitor.Plugins&&window.Capacitor.Plugins.LocalNotifications;if(!LN)return;
+  try{let p=await LN.checkPermissions();if(p.display==="prompt"||p.display==="prompt-with-rationale")p=await LN.requestPermissions();if(p.display!=="granted")return;
+    const pend=await LN.getPending();if(pend.notifications&&pend.notifications.length)await LN.cancel({notifications:pend.notifications.map(n=>({id:n.id}))});
+    const list=notifPlan(Date.now());if(list.length)await LN.schedule({notifications:list})}catch(e){}}
 /* actualisation à l'instant t : à l'ouverture, à chaque retour dans l'app, et toutes les 10 minutes tant qu'elle est ouverte */
 function liveRefresh(){refreshDB();if(!$("view-coast").hidden)refreshCO()}
 document.addEventListener("visibilitychange",()=>{if(document.visibilityState==="visible")liveRefresh()});
@@ -231,6 +244,7 @@ addEventListener("pageshow",e=>{if(e.persisted)liveRefresh()});
 addEventListener("focus",liveRefresh);addEventListener("online",liveRefresh);
 setInterval(()=>{if(document.visibilityState==="visible")liveRefresh()},10*60000);
 setInterval(()=>{renderDBHead();renderCOHead();if(D&&selJ==null&&document.visibilityState==="visible")renderDB();if(C&&mode==="now"&&!$("view-coast").hidden)renderCO()},60000);
-if("serviceWorker" in navigator&&location.protocol!=="file:")navigator.serviceWorker.register("sw.js").catch(()=>{});
+if(!isNative&&"serviceWorker" in navigator&&location.protocol!=="file:")navigator.serviceWorker.register("sw.js").catch(()=>{});
 renderCardsDB();renderDB();renderCO();installHint();show(location.hash==="#cote"?"coast":location.hash==="#imsouane"?"ims":"db");
 refreshDB(true);
+if(isNative)planNotifs();
